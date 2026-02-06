@@ -1,0 +1,460 @@
+import requests
+import os
+import tkinter as tk
+from tkinter import messagebox
+from datetime import datetime, timedelta
+from openpyxl import Workbook, load_workbook
+from configparser import ConfigParser
+from threading import Thread, Event
+import time
+import pandas as pd
+import json
+
+# 全局变量，表示是否处于智能模式
+in_smart_mode = False
+stop_event = Event()  # 事件对象，用于控制线程
+
+def smart_mode():
+    global in_smart_mode
+    if in_smart_mode:
+        messagebox.showinfo("提示", "程序正在智能模式中，请等待智能模式结束。")
+        return
+
+    def check_time():
+        global in_smart_mode
+        in_smart_mode = True
+        while not stop_event.is_set():
+            current_time = datetime.now()
+            if current_time.minute == 59 and current_time.second == 5:
+                countdown_label.config(text="正在运行程序")
+                run_script_today()
+                countdown_label.config(text=f"运行结束，将在下个时段59分05秒自动运行")
+            time.sleep(1)
+        in_smart_mode = False
+
+    messagebox.showinfo("智能模式", "程序将在每个小时的59分05秒自动开启")
+    countdown_label.config(text="程序将在59分05秒自动运行")
+    check_thread = Thread(target=check_time)
+    check_thread.start()
+
+# 函数：保存配置到文件
+def save_config(cookie):
+    config = ConfigParser()
+    config['USER'] = {
+        'cookie': cookie,
+    }
+    with open('config.ini', 'w') as configfile:
+        config.write(configfile)
+
+# 函数：从文件加载配置
+def load_config():
+    config = ConfigParser()
+    config.read('config.ini')
+    if 'USER' in config:
+        return (config['USER']['cookie'])
+    else:
+        return '', ''
+
+
+def run_script_today():
+    try:
+        cookie = entry_password.get()
+
+        # 定义请求日期
+        today = datetime.now().strftime("%Y%m%d")
+        # 定义当前时间
+        current_date = datetime.today().strftime('%Y-%m-%d')
+        now = datetime.now()
+        header = {
+            'accept': 'application/json, text/plain, */*',
+            'Authorization': cookie,
+            'Host': 'kyqp99admin1.com:1788'
+        }
+        # 首页数据
+        url = 'http://kyqp99admin1.com:1788/adminsystem/server/homepage/findAddPersonNumber'
+        res = requests.get(url=url, headers=header, params=None)
+        response_json = json.loads(res.text)
+        在线人数 = response_json['data']['onlineCount']
+        print(在线人数)
+
+        # 新增人数
+        response_json = json.loads(res.text)
+        新增注册 = response_json['data']['addPersonCount']
+        print(新增注册)
+
+        # 注册充值人数
+        response_json = json.loads(res.text)
+        注册充值人数 = response_json['data']['totalmembers']
+        print(注册充值人数)
+
+        # 充值人数
+        url = 'http://kyqp99admin1.com:1788/adminsystem/server/homepage/findMarketOpeningReportDateList'
+        params = {
+            'pageNo': 1,
+
+        }
+        res = requests.get(url=url, headers=header, params=params)
+        response_json = json.loads(res.text)
+        入款人数 = response_json['data']['payPersonCount']
+        print(入款人数)
+
+        # 出款人数
+        response_json = json.loads(res.text)
+        出款人数 = response_json['data']['withdrawPersonCount']
+        print(出款人数)
+
+        # 投注人数
+        url = 'http://kyqp99admin1.com:1788/adminsystem/server/summaryReport/findMemberSummaryReportPage'
+        headers = {
+            'Accept': 'application/json, text/plain, */*',
+            'Authorization': cookie,
+            'Host': 'kyqp99admin1.com:1788',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.75 Safari/537.36 Edg/100.0.1185.36'
+        }
+
+        payload = {
+            "startDate": today,
+            "endDate": today,
+            "platformCodeList": ["MGG_CP", "OB", "IMSB", "FBTY", "KYTY", "OBTY", "CR", "AG", "BBIN", "HJ", "BGZR", "DG",
+                                 "EBET", "OBG", "CQ", "FGDZ", "JDB_DZ", "AGDZ", "JDB_DZ_LHJ", "MGWBDZ", "MTDZ", "SGDZ",
+                                 "PGDZ", "THDZ", "BBINDZ", "JDBDZA", "MGDZA", "CQDZA", "MTDZA", "PGDZA", "MBDZ",
+                                 "YGRDZ",
+                                 "SSOCHESS", "KYQP", "FGQP", "VG", "NWG", "MTQP", "SGWIN", "THQP", "BSQP", "MGG",
+                                 "MBQP",
+                                 "SSP", "JDB_BY_DF", "FGBYZJ", "FGBY3D", "FGBYBN", "FGBYHL", "FGBYMM", "JDB_BY_DF_II",
+                                 "BGBYDS", "BGBYXY", "FGBYMF", "FGBYLS3D", "FGBYMR", "MT3DBY", "MTLKPY", "MTJCBY",
+                                 "SGBYTW",
+                                 "THJCBY", "THDNTG1", "THDNTG2", "THLKBY", "THDSBY", "THXLDB", "THJCBYDLC", "THDHLW",
+                                 "THBNDR", "MTFKBY", "SGBYDZ", "WBCSBY", "JDB_BY_YLF", "MTHW2", "MTPYLL", "THPYDLD",
+                                 "THXYBY", "BSBYWZW", "BS3DHDLL", "BS3DMRY", "BS3DQPBY", "JDB_BY_DISCO", "JDBWLBY",
+                                 "MTMGBY", "BSDNTGBY", "BSLKBY", "JDB_BY_LLG", "KYLKBY", "KYHBBY", "BSBNDR", "SGYXBY",
+                                 "BGBYDX", "JDBTTBY", "DGJT", "DG_BY_BSD", "DG_BY_TTBY", "FGFYBY", "YGRHDBY", "YGRBCDR",
+                                 "YGRZML", "YGRZMRY", "YGRQSBY", "YGRLYFY", "FGMRBY", "DG_BY_NNBY", "IMDJ"],
+            "pageVO": {"pageNo": 1, "pageSize": 20}, "memberOrAgent": 2
+        }
+
+        response = requests.post(url, headers=headers, json=payload)
+
+        if response.status_code == 200:
+            data = response.json()
+            投注人数 = data['data']['totalRecord']
+            print(投注人数)
+        else:
+            print("Request failed with status code:", response.status_code)
+
+        # 注册充值金额
+        url = 'http://kyqp99admin1.com:1788/adminsystem/server/homepage/findResultByConditionalSum'
+
+        # 设置startDate和endDate
+        params = {
+            'startDate': now.strftime('%Y-%m-%d 00:00:00'),
+            'endDate': now.strftime('%Y-%m-%d 23:59:59')
+        }
+        res = requests.get(url=url, headers=header, params=params)
+        response_json = json.loads(res.text)
+        if response_json.get('data') is None:
+            注册充值金额 = 0
+        else:
+            注册充值金额 = response_json['data']['firstRechargeAmount']
+        print(注册充值金额)
+
+        # 游戏报表[总打码/总盈亏]
+        url = 'http://kyqp99admin1.com:1788/adminsystem/server/summaryReport/findMultiplePlatformSummaryReport'
+
+        data = {
+            "startDate": today,
+            "endDate": today,
+            'memberOrAgent': 2,
+            'platformCodeList': ["MGG_CP", "OB", "IMSB", "FBTY", "KYTY", "OBTY", "CR", "AG", "BBIN", "HJ", "BGZR", "DG",
+                                 "EBET", "OBG", "CQ", "FGDZ", "JDB_DZ", "AGDZ", "JDB_DZ_LHJ", "MGWBDZ", "MTDZ", "SGDZ",
+                                 "PGDZ", "THDZ", "BBINDZ", "JDBDZA", "MGDZA", "CQDZA", "MTDZA", "PGDZA", "MBDZ",
+                                 "YGRDZ",
+                                 "SSOCHESS", "KYQP", "FGQP", "VG", "NWG", "MTQP", "SGWIN", "THQP", "BSQP", "MGG",
+                                 "MBQP",
+                                 "SSP", "JDB_BY_DF", "FGBYZJ", "FGBY3D", "FGBYBN", "FGBYHL", "FGBYMM", "JDB_BY_DF_II",
+                                 "BGBYDS", "BGBYXY", "FGBYMF", "FGBYLS3D", "FGBYMR", "MT3DBY", "MTLKPY", "MTJCBY",
+                                 "SGBYTW", "THJCBY", "THDNTG1", "THDNTG2", "THLKBY", "THDSBY", "THXLDB", "THJCBYDLC",
+                                 "THDHLW", "THBNDR", "MTFKBY", "SGBYDZ", "WBCSBY", "JDB_BY_YLF", "MTHW2", "MTPYLL",
+                                 "THPYDLD", "THXYBY", "BSBYWZW", "BS3DHDLL", "BS3DMRY", "BS3DQPBY", "JDB_BY_DISCO",
+                                 "JDBWLBY", "MTMGBY", "BSDNTGBY", "BSLKBY", "JDB_BY_LLG", "KYLKBY", "KYHBBY", "BSBNDR",
+                                 "SGYXBY", "BGBYDX", "JDBTTBY", "DGJT", "DG_BY_BSD", "DG_BY_TTBY", "FGFYBY", "YGRHDBY",
+                                 "YGRBCDR", "YGRZML", "YGRZMRY", "YGRQSBY", "YGRLYFY", "FGMRBY", "DG_BY_NNBY", "IMDJ"],
+            'pageVO': {'pageNo': 1, 'pageSize': 20},
+        }
+        headers = {
+            'Accept': 'application/json, text/plain, */*',
+            'Authorization': cookie,
+            'Host': 'kyqp99admin1.com:1788',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.75 Safari/537.36 Edg/100.0.1185.36'
+        }
+
+        response = requests.post(url, json=data, headers=headers)
+        if response.status_code == 200:
+            总打码 = response.json()['data']['betAmountSum']
+            盈亏额 = response.json()['data']['payAmountSum']
+            # 将数据类型转换为 float，确保是纯数值
+            总打码 = float(总打码)
+            盈亏额 = abs(float(盈亏额))
+            print(盈亏额)
+
+        else:
+            print('输出错误信息，并打印响应的状态码:', response.status_code)
+
+        # 资金报表
+        url = 'http://kyqp99admin1.com:1788/adminsystem/server/financialReport/findfinancialReport'
+        header = {'Authorization': cookie}
+
+        # 设置startDate和endDate
+        params = {
+            'startDate': now.strftime('%Y-%m-%d 00:00:00'),
+            'endDate': now.strftime('%Y-%m-%d 23:59:59')
+        }
+        res = requests.get(url=url, headers=header, params=params)
+        response_json = json.loads(res.text)
+        # 总充值金额
+        type_1_data = next(data for data in response_json['data'] if data['type'] == 1)
+        总充值金额 = type_1_data['amount']
+        # 总取款金额
+        type_2_data = next(data for data in response_json['data'] if data['type'] == 2)
+        总取款金额 = type_2_data['amount']
+        print(总充值金额)
+        print(总取款金额)
+
+        # 银行卡充值金额
+        url = 'http://kyqp99admin1.com:1788/adminsystem/server/financialReport/findRechargeFinancialReport'
+        header = {'Authorization': cookie}
+
+        # 设置startDate和endDate
+        params = {
+            'startDate': now.strftime('%Y-%m-%d 00:00:00'),
+            'endDate': now.strftime('%Y-%m-%d 23:59:59'),
+            'type': 2}
+
+        response = requests.get(url=url, headers=header, params=params)
+        response_json = response.json()
+
+        for data in response_json['data']:
+            if data['type'] == '2':
+                银行卡充值金额 = float(data['amount'])
+                银行卡充值人数 = float(data['number'])
+                print(银行卡充值金额)
+                print(银行卡充值人数)
+
+        # 钱包充值金额
+        url = "http://kyqp99admin1.com:1788/adminsystem/server/memberRechargeOrder/findOnlineRechargeOrderPageResult"
+        # 设置请求头信息
+        headers = {
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Authorization": cookie,
+            "Connection": "keep-alive",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0"
+        }
+
+        # 设置请求参数
+        params = {
+            "platformName": "GOpay支付,vanbookpayay支付,vippay钱包支付,UPay充值通道,波币钱包",
+            "lastUpdatedTimeStart": now.strftime('%Y-%m-%d 00:00:00'),
+            "lastUpdatedTimeEnd": now.strftime('%Y-%m-%d 23:59:59'),
+            'rechargeStatus': '2',
+            "pageNo": 1,
+            "pageSize": 20
+        }
+
+        # 发送GET请求
+        response = requests.get(url, headers=headers, params=params)
+
+        if response.status_code == 200:
+            data = response.json()
+            dd = data.get('data', [])
+
+            # 检查响应数据是否为空
+            if not dd:
+                print("响应数据为空，总充值金额为: 0")
+                return
+
+            # 计算总充值金额
+            def calculate_total_recharge_amount(data):
+                total_amount = 0
+                for order in data['result']:
+                    total_amount += order['rechargeAmount']
+                return total_amount
+
+            钱包充值金额 = calculate_total_recharge_amount(dd)
+            print("钱包充值金额:", 钱包充值金额)
+        else:
+            print("请求失败")
+
+        # 钱包充值人数
+        url = "http://kyqp99admin1.com:1788/adminsystem/server/memberRechargeOrder/findOnlineRechargeOrderPageResult"
+        # 设置请求头信息
+        headers = {
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Authorization": cookie,
+            "Connection": "keep-alive",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0"
+        }
+
+        # 设置请求参数
+        params = {
+            "platformName": "GOpay支付,vanbookpayay支付,vippay钱包支付,UPay充值通道,波币钱包",
+            "lastUpdatedTimeStart": now.strftime('%Y-%m-%d 00:00:00'),
+            "lastUpdatedTimeEnd": now.strftime('%Y-%m-%d 23:59:59'),
+            'rechargeStatus': '2',
+            "pageNo": 1,
+            "pageSize": 20
+        }
+
+        # 发送GET请求
+        response = requests.get(url, headers=headers, params=params)
+        data = response.json()['data']['result']
+        # 转换为DataFrame格式
+        df = pd.DataFrame(data)
+        # 去重
+        df = df.drop_duplicates(subset=['userId'])
+        # 计算去重后的数量并输出
+        钱包充值人数 = len(df)
+        print('钱包充值人数:', 钱包充值人数)
+
+        # 钱包出款人数
+        url = 'http://kyqp99admin1.com:1788/adminsystem/server/memberWithdraw/queryProcessingFinishOrderPage'
+
+        params = {'platformName': 'UPAY钱包代付,VIPPAY钱包代付,GOPAY钱包代付,OKPAY钱包代付,波币钱包代付',
+                  'approvalStatus': 2,
+                  'lastUpdateStartDate': f'{current_date} 00:00:00',
+                  'lastUpdateEndDate': f'{current_date} 23:59:59'}
+        header = {'Authorization': cookie}
+        res = requests.get(url=url, headers=header, params=params)
+        data = res.json()['data']['result']
+        # 转换为DataFrame格式
+        df = pd.DataFrame(data)
+        # 去重
+        df = df.drop_duplicates(subset=['userId'])
+        # 计算去重后的数量并输出
+        钱包出款人数 = len(df)
+        print('钱包出款人数:', 钱包出款人数)
+
+        # 钱包出款
+        # 发送请求获取数据
+        url = 'http://kyqp99admin1.com:1788/adminsystem/server/memberWithdraw/queryProcessingFinishOrderPage'
+        params = {
+            'platformName': 'UPAY钱包代付,VIPPAY钱包代付,GOPAY钱包代付,OKPAY钱包代付,波币钱包代付',
+            'approvalStatus': 2,
+            'lastUpdateStartDate': f'{current_date} 00:00:00',
+            'lastUpdateEndDate': f'{current_date} 23:59:59',
+        }
+        header = {'Authorization': cookie}
+        res = requests.get(url=url, headers=header, params=params)
+        data = res.json()['data']['result'] if 'data' in res.json() and 'result' in res.json()['data'] else []
+
+        if not data:
+            print(0)
+            钱包出款金额 = 0
+        else:
+            # 转换为DataFrame格式
+            df = pd.DataFrame(data)
+            # 计算 withdrawUsdtAmount 列的总和
+            钱包出款金额 = df['withdrawUsdtAmount'].sum()
+
+            print(钱包出款金额)
+
+        # 打开工作簿
+        wb = load_workbook('棋牌数据.xlsx')
+
+        # 选择要操作的表格
+        ws = wb['Sheet1']
+
+        # 写入数据
+        ws.cell(row=4, column=1, value=0)
+        ws.cell(row=4, column=2, value=在线人数)
+        ws.cell(row=4, column=3, value=新增注册)
+        ws.cell(row=4, column=4, value=入款人数)
+        ws.cell(row=4, column=5, value=出款人数)
+        ws.cell(row=4, column=6, value=投注人数)
+        ws.cell(row=4, column=7, value=总充值金额)
+        ws.cell(row=4, column=8, value=总取款金额)
+        ws.cell(row=4, column=12, value=注册充值人数)
+        ws.cell(row=4, column=11, value=注册充值金额)
+        ws.cell(row=4, column=13, value=银行卡充值金额)
+        ws.cell(row=4, column=18, value=银行卡充值人数)
+        ws.cell(row=4, column=15, value=钱包充值金额)
+        ws.cell(row=4, column=17, value=钱包出款金额)
+        ws.cell(row=4, column=20, value=钱包充值人数)
+        ws.cell(row=4, column=22, value=钱包出款人数)
+        ws.cell(row=4, column=28, value=总打码)
+        ws.cell(row=4, column=31, value=盈亏额)
+
+        # 保存工作簿
+        wb.save("棋牌数据.xlsx")
+        os.system('start 棋牌数据.xlsx')
+
+
+    except Exception as e:
+        messagebox.showerror("错误", str(e))
+
+# 函数：手动保存配置
+def manual_save():
+    cookie = entry_password.get()
+    save_config(cookie)
+    messagebox.showinfo("提示", "配置已保存！")
+
+def on_closing():
+    global in_smart_mode
+    if in_smart_mode:
+        stop_event.set()  # 通知线程退出
+    root.destroy()  # 关闭窗口
+
+# 创建主窗口
+root = tk.Tk()
+root.title("棋牌每小时数据_版本1.1")
+root.geometry("330x330")  # 设置窗口大小
+
+# 设置字体
+font_style = ("Helvetica", 12)
+font_styl = ("Helvetica", 15)
+
+# 如果存在配置文件则加载配置
+cookie = load_config()
+
+# 创建“输入密码”标签和输入框
+label_password = tk.Label(root, text="输入密码:", font=font_style)
+label_password.grid(row=1, column=0, padx=10, pady=5, sticky='e')
+
+entry_password = tk.Entry(root, font=font_style)
+entry_password.grid(row=1, column=1, padx=10, pady=5)
+entry_password.insert(0, cookie)
+
+# 创建“手动保存”按钮
+save_button = tk.Button(root, text="手动保存", command=manual_save, font=font_style)
+save_button.grid(row=4, columnspan=3, pady=10)
+
+submit_button_today = tk.Button(root, text="棋牌每小时数据", command=run_script_today, font=font_styl, fg='red')
+submit_button_today.grid(row=5, columnspan=2, pady=10)
+
+# 超级显示框
+time_label = tk.Label(root, text="", font=("Microsoft YaHei", 18), bg="gray", fg="white")
+time_label.grid(row=7, columnspan=2, pady=10)
+
+def update_time():
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    time_label.config(text=current_time)
+    time_label.after(1000, update_time)
+
+update_time()
+
+# 智能模式按钮
+smart_button = tk.Button(root, text="智能模式", command=smart_mode, font=font_style, bg="light blue")
+smart_button.grid(row=8, columnspan=2, pady=10)
+
+# 倒计时显示框
+countdown_label = tk.Label(root, text="", font=("Microsoft YaHei", 10), bg="red", fg="white")
+countdown_label.grid(row=9, columnspan=2, pady=10)
+
+# 绑定窗口关闭事件
+root.protocol("WM_DELETE_WINDOW", on_closing)
+
+# 运行主循环
+root.mainloop()
