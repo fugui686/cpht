@@ -1,0 +1,767 @@
+import requests
+from datetime import datetime, timedelta
+import os
+from openpyxl.workbook import Workbook
+import tkinter as tk
+from tkinter import messagebox
+
+当前时间 = datetime.now()
+本月第一天 = (当前时间.replace(day=1)).strftime("%Y-%m-%d")
+昨天 = (当前时间 - timedelta(days=1)).strftime("%Y-%m-%d")
+
+def run_script():
+    try:
+        tk = entry_password.get()  # 获取 Cookie
+        port = entry_port.get()  # 获取 URL 中的数字部分
+        headers = {
+            'Cookie': tk,
+        }
+        url = f'http://back.{port}.com/back/back/sscCustomerRedRoomReport/redGiftAgentReportList'  # 红包代理报表
+        params = {
+            'limit': '99999',
+            'offset': '0',
+            'parentId': '0',
+            'options': '1',
+            'startDate': 昨天,
+            'endDate': 昨天,
+        }
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code == 200:
+            data = response.json()['rows']
+            昨日红包人数 = 0
+            昨日红包有效投注 = 0
+            昨日红包盈利 = 0
+            for dd in data:
+                昨日红包人数 += dd.get('betCount')
+                昨日红包有效投注 += dd.get('sendAmount')
+                昨日红包盈利 += dd.get('profitAmount')
+            昨日红包盈利 = -abs(昨日红包盈利) if 昨日红包盈利 > 0 else abs(昨日红包盈利)
+        else:
+            print(f"请求失败，状态码: {response.status_code}")
+
+        url = f'http://back.{port}.com/back/back/sscCustomerRedGiftOrder/list'  # 红包游戏记录
+        params = {
+            'limit': '20',
+            'offset': '0',
+            'giftStatus': '2',
+            'isTest': '0',
+            'startTime': 昨天,
+            'endTime': 昨天,
+        }
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code == 200:
+            昨日红包注单量 = response.json()['total']
+
+        url = f'http://back.{port}.com/back/cards/cardsAgentReport/cardsAgentReportList'  # 棋牌代理报表
+        params = {
+            'parentId': '0',
+            'options': '1',
+            'startDate': 昨天,
+            'endDate': 昨天,
+        }
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code == 200:
+            data = response.json()['rows']
+            昨日棋牌人数 = 0
+            昨日棋牌注单量 = 0
+            昨日棋牌有效投注 = 0
+            昨日棋牌盈利 = 0
+            for dd in data:
+                昨日棋牌人数 += dd.get('userCount', 0)
+                昨日棋牌注单量 += dd.get('playCount', 0)
+                昨日棋牌有效投注 += dd.get('betsAmount', 0)
+                昨日棋牌盈利 += dd.get('winAmount', 0)
+            昨日棋牌盈利 = -abs(昨日棋牌盈利) if 昨日棋牌盈利 > 0 else abs(昨日棋牌盈利)
+        else:
+            print(f"请求失败，状态码: {response.status_code}")
+
+        url = f'http://back.{port}.com/back/cards/openCardsAgentReport/openCardsAgentReportList'  # 开元代理报表
+        params = {
+            'limit': '99999',
+            'offset': '0',
+            'parentId': '0',
+            'options': '1',
+            'startDate': 昨天,
+            'endDate': 昨天,
+        }
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code == 200:
+            data = response.json()['rows']
+            昨日开元人数 = 0
+            昨日开元注单量 = 0
+            昨日开元有效投注 = 0
+            昨日开元盈利 = 0
+            for dd in data:
+                昨日开元人数 += dd.get('userCount')
+                昨日开元注单量 += dd.get('playCount')
+                昨日开元有效投注 += dd.get('betsAmount')
+                昨日开元盈利 += dd.get('winAmount')
+            昨日开元盈利 = -abs(昨日开元盈利) if 昨日开元盈利 > 0 else abs(昨日开元盈利)
+        else:
+            print(f"请求失败，状态码: {response.status_code}")
+
+        url = f'http://back.{port}.com/back/cards/jdbAgentReport/jdbAgentReportList'  # JDB代理报表
+        params = {
+            'limit': '99999',
+            'offset': '0',
+            'parentId': '0',
+            'options': '1',
+            'startDate': 昨天,
+            'endDate': 昨天,
+        }
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code == 200:
+            data = response.json()['rows']
+            昨日JDB人数 = 0
+            昨日JDB有效投注 = 0
+            昨日JDB盈利 = 0
+            for data in data:
+                昨日JDB人数 += data.get('userCount')
+                昨日JDB有效投注 += data.get('sumBet')
+                昨日JDB盈利 += data.get('sumTotal')
+            昨日JDB盈利 = -abs(昨日JDB盈利) if 昨日JDB盈利 > 0 else abs(昨日JDB盈利)
+
+        url = f'http://back.{port}.com/back/cards/jdbFishingBetsRecord/jdbFishingBetsRecordList'  # JDB注单记录
+        params = {
+            'limit': '30',
+            'offset': '0',
+            'istest': '0',
+            'startUpdate': 昨天,
+            'endUpdate': 昨天,
+        }
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code == 200:
+            昨日JDB注单量 = response.json()['total']
+
+        url = f'http://back.{port}.com/back/cards/agDataReportDay/agentReportList'  # AG代理报表
+        params = {
+            'parentId': '0',
+            'options': '1',
+            'startDate': 昨天,
+            'endDate': 昨天,
+        }
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code == 200:
+            data = response.json()['rows']
+            昨日AG人数 = 0
+            昨日AG有效投注 = 0
+            昨日AG盈利 = 0
+            for data in data:
+                昨日AG人数 += data.get('betCount')
+                昨日AG有效投注 += data.get('betsAmount')
+                昨日AG盈利 += data.get('winAmount')
+            昨日AG盈利 = -abs(昨日AG盈利) if 昨日AG盈利 > 0 else abs(昨日AG盈利)
+        else:
+            print(f"请求失败，状态码: {response.status_code}")
+
+        url = f'http://back.{port}.com/back/cards/agHunterSceneRecord/agHunterSceneRecordList'  # AG注单记录
+        params = {
+            'limit': '30',
+            'offset': '0',
+            'startTime': 昨天,
+            'endTime': 昨天,
+        }
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code == 200:
+            昨日AG注单量 = response.json()['total']
+
+        url1 = f'http://back.{port}.com/back/back/sscPayChannelDataReport/queryBetsUsersTotalNum'  # 彩票统合统计
+        url2 = f'http://back.{port}.com/back/back/sscPayChannelDataReport/queryBetsCountTotalNum'  # 彩票统合统计
+        data = {
+            'options': '1',
+            'startTime': 昨天,
+            'endTime': 昨天,
+        }
+        response = requests.post(url1, headers=headers, data=data)
+        if response.status_code == 200:
+            昨日彩票人数 = response.json()['betsPersonNum']
+
+        response = requests.post(url2, headers=headers, data=data)
+        if response.status_code == 200:
+            昨日彩票注单量 = response.json()['betsTotalNum']
+
+        url = f'http://back.{port}.com/back/back/sscPayChannelDataReport/queryRebateAmount'  # 彩票统合统计
+        data = {
+            'options': '1',
+            'startTime': 昨天,
+            'endTime': 昨天,
+        }
+        response = requests.post(url, headers=headers, data=data)
+        if response.status_code == 200:
+            昨日彩票有效投注 = response.json()['sumBetsAmount']
+
+        def send_request(url, data):  # 综合统计昨日彩票盈利
+            # 设置请求头
+            headers = {
+                "Cookie": tk,
+            }
+
+            # 发送 POST 请求并获取响应
+            response = requests.post(url, headers=headers, data=data)
+
+            # 解析响应数据
+            if response.status_code == 200:
+                return response.json()
+            else:
+                return None
+
+        # 设置请求的 URL
+        url1 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryRebateAmount"
+        url2 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryGiftCashSysWithdrawSum"
+        url3 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryArtificial"
+        url4 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryUnderLineActivity"
+        url5 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryThirdActivity"
+        url6 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryForthActivity"
+        url7 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryRecordAmount"
+        url8 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryRecordAmount"
+        url9 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryLotteryActivity"
+        url10 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryLotteryActivity"
+        url11 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryYbInterestRecord"
+
+        # 构造请求体数据
+        data = {
+            "options": "1",
+            "startTime": 昨天,
+            "endTime": 昨天,
+            "type": "1",
+            "rechargeType": "15"
+        }
+        data1 = {
+            "options": "1",
+            "startTime": 昨天,
+            "endTime": 昨天,
+            "type": "4",
+            "rebateType": "7",
+        }
+        data2 = {
+            "options": "1",
+            "startTime": 昨天,
+            "endTime": 昨天,
+            "type": "3",
+        }
+        data3 = {
+            "options": "1",
+            "startTime": 昨天,
+            "endTime": 昨天,
+            "rebateType": "4",
+        }
+        data4 = {
+            "options": "1",
+            "startTime": 昨天,
+            "endTime": 昨天,
+            "type": "1",
+        }
+        data5 = {
+            "options": "1",
+            "startTime": 昨天,
+            "endTime": 昨天,
+            "rebateType": "6",
+        }
+
+        # 发送第一个请求
+        response1 = send_request(url1, data)
+        response2 = send_request(url2, data)
+        response3 = send_request(url3, data)
+        response4 = send_request(url4, data)
+        response5 = send_request(url5, data)
+        response6 = send_request(url6, data)
+        response7 = send_request(url7, data2)
+        response8 = send_request(url8, data1)
+        response9 = send_request(url9, data3)
+        response10 = send_request(url10, data1)
+        response11 = send_request(url11, data)
+        response12 = send_request(url7, data4)
+        response13 = send_request(url9, data5)
+
+        # 解析第一个响应数据
+        if response1 is not None:
+            昨日彩票总报表 = response1['sumBetsAmount'] - response1['sumAwardAmount']  # 投注金额-中奖金额
+        else:
+            print("无法获取数据.")
+
+        if response1 is not None:
+            昨日返点总额 = response1['sumRebateAmount']
+        else:
+            print("无法获取数据.")
+
+        # 初始化变量用于存储总和
+        昨日活动礼金 = 0
+
+        # 遍历 response2 到 response11，累加相应的值
+        for response in [response2, response3, response4, response5, response6, response7, response8, response9,
+                         response10, response11, response12, response13]:
+            if response is not None:
+                昨日活动礼金 += response.get('cusSumGiftAmount', 0) + response.get('sumRealAmount', 0)  # 活动礼金总和
+
+        昨日彩票盈利 = 昨日彩票总报表 - 昨日活动礼金 - 昨日返点总额
+
+        url = f'http://back.{port}.com/back/back/sscDataReportLottery/queryLotteryAgentLine'  # 自营彩
+        params = {
+            'limit': '99999',
+            'offset': '0',
+            'parentId': '0',
+            'options': '1',
+            'lotteryId': '0',
+            'startTime': 昨天,
+            'endTime': 昨天,
+        }
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code == 200:
+            data = response.json()['rows']
+            昨日自营彩人数 = 0
+            昨日自营彩注单量 = 0
+            昨日自营彩有效投注 = 0
+            昨日自营彩派奖 = 0
+            for dd in data:
+                昨日自营彩人数 += dd.get('betTotal_all')
+                昨日自营彩注单量 += dd.get('noteNumCount_own')
+                昨日自营彩有效投注 += dd.get('betCount_own')
+                昨日自营彩派奖 += dd.get('awardCount_own')
+            昨日自营彩盈利 = 昨日自营彩有效投注 - 昨日自营彩派奖
+
+        else:
+            print(f"请求失败，状态码: {response.status_code}")
+
+        url = f'http://back.{port}.com/back/back/sscCustomerRedRoomReport/redGiftAgentReportList'  # 红包代理报表
+        params = {
+            'limit': '99999',
+            'offset': '0',
+            'parentId': '0',
+            'options': '1',
+            'startDate': 本月第一天,
+            'endDate': 昨天,
+        }
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code == 200:
+            data = response.json()['rows']
+            当月红包人数 = 0
+            当月红包有效投注 = 0
+            当月红包盈利 = 0
+            for dd in data:
+                当月红包人数 += dd.get('betCount')
+                当月红包有效投注 += dd.get('sendAmount')
+                当月红包盈利 += dd.get('profitAmount')
+            当月红包盈利 = -abs(当月红包盈利) if 当月红包盈利 > 0 else abs(当月红包盈利)
+        else:
+            print(f"请求失败，状态码: {response.status_code}")
+
+        url = f'http://back.{port}.com/back/back/sscCustomerRedGiftOrder/list'  # 红包游戏记录
+        params = {
+            'limit': '20',
+            'offset': '0',
+            'giftStatus': '2',
+            'isTest': '0',
+            'startTime': 本月第一天,
+            'endTime': 昨天,
+        }
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code == 200:
+            当月红包注单量 = response.json()['total']
+
+        url = f'http://back.{port}.com/back/cards/cardsAgentReport/cardsAgentReportList'  # 棋牌代理报表
+        params = {
+            'parentId': '0',
+            'options': '1',
+            'startDate': 本月第一天,
+            'endDate': 昨天,
+        }
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code == 200:
+            data = response.json()['rows']
+            当月棋牌人数 = 0
+            当月棋牌注单量 = 0
+            当月棋牌有效投注 = 0
+            当月棋牌盈利 = 0
+            for dd in data:
+                当月棋牌人数 += dd.get('userCount', 0)
+                当月棋牌注单量 += dd.get('playCount', 0)
+                当月棋牌有效投注 += dd.get('betsAmount', 0)
+                当月棋牌盈利 += dd.get('winAmount', 0)
+            当月棋牌盈利 = -abs(当月棋牌盈利) if 当月棋牌盈利 > 0 else abs(当月棋牌盈利)
+        else:
+            print(f"请求失败，状态码: {response.status_code}")
+
+        url = f'http://back.{port}.com/back/cards/openCardsAgentReport/openCardsAgentReportList'  # 开元代理报表
+        params = {
+            'limit': '99999',
+            'offset': '0',
+            'parentId': '0',
+            'options': '1',
+            'startDate': 本月第一天,
+            'endDate': 昨天,
+        }
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code == 200:
+            data = response.json()['rows']
+            当月开元人数 = 0
+            当月开元注单量 = 0
+            当月开元有效投注 = 0
+            当月开元盈利 = 0
+            for dd in data:
+                当月开元人数 += dd.get('userCount')
+                当月开元注单量 += dd.get('playCount')
+                当月开元有效投注 += dd.get('betsAmount')
+                当月开元盈利 += dd.get('winAmount')
+            当月开元盈利 = -abs(当月开元盈利) if 当月开元盈利 > 0 else abs(当月开元盈利)
+        else:
+            print(f"请求失败，状态码: {response.status_code}")
+
+        url = f'http://back.{port}.com/back/cards/jdbAgentReport/jdbAgentReportList'  # JDB代理报表
+        params = {
+            'limit': '99999',
+            'offset': '0',
+            'parentId': '0',
+            'options': '1',
+            'startDate': 本月第一天,
+            'endDate': 昨天,
+        }
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code == 200:
+            data = response.json()['rows']
+            当月JDB人数 = 0
+            当月JDB有效投注 = 0
+            当月JDB盈利 = 0
+            for data in data:
+                当月JDB人数 += data.get('userCount')
+                当月JDB有效投注 += data.get('sumBet')
+                当月JDB盈利 += data.get('sumTotal')
+            当月JDB盈利 = -abs(当月JDB盈利) if 当月JDB盈利 > 0 else abs(当月JDB盈利)
+
+        url = f'http://back.{port}.com/back/cards/jdbFishingBetsRecord/jdbFishingBetsRecordList'  # JDB注单记录
+        params = {
+            'limit': '30',
+            'offset': '0',
+            'istest': '0',
+            'startUpdate': 本月第一天,
+            'endUpdate': 昨天,
+        }
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code == 200:
+            当月JDB注单量 = response.json()['total']
+
+        url = f'http://back.{port}.com/back/cards/agDataReportDay/agentReportList'  # AG代理报表
+        params = {
+            'parentId': '0',
+            'options': '1',
+            'startDate': 本月第一天,
+            'endDate': 昨天,
+        }
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code == 200:
+            data = response.json()['rows']
+            当月AG人数 = 0
+            当月AG有效投注 = 0
+            当月AG盈利 = 0
+            for data in data:
+                当月AG人数 += data.get('betCount')
+                当月AG有效投注 += data.get('betsAmount')
+                当月AG盈利 += data.get('winAmount')
+            当月AG盈利 = -abs(当月AG盈利) if 当月AG盈利 > 0 else abs(当月AG盈利)
+        else:
+            print(f"请求失败，状态码: {response.status_code}")
+
+        url = f'http://back.{port}.com/back/cards/agHunterSceneRecord/agHunterSceneRecordList'  # AG注单记录
+        params = {
+            'limit': '30',
+            'offset': '0',
+            'startTime': 本月第一天,
+            'endTime': 昨天,
+        }
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code == 200:
+            当月AG注单量 = response.json()['total']
+
+        url1 = f'http://back.{port}.com/back/back/sscPayChannelDataReport/queryBetsUsersTotalNum'  # 彩票统合统计
+        url2 = f'http://back.{port}.com/back/back/sscPayChannelDataReport/queryBetsCountTotalNum'  # 彩票统合统计
+        data = {
+            'options': '1',
+            'startTime': 本月第一天,
+            'endTime': 昨天,
+        }
+        response = requests.post(url1, headers=headers, data=data)
+        if response.status_code == 200:
+            当月彩票人数 = response.json()['betsPersonNum']
+
+        response = requests.post(url2, headers=headers, data=data)
+        if response.status_code == 200:
+            当月彩票注单量 = response.json()['betsTotalNum']
+
+        url = f'http://back.{port}.com/back/back/sscPayChannelDataReport/queryRebateAmount'  # 彩票统合统计
+        data = {
+            'options': '1',
+            'startTime': 本月第一天,
+            'endTime': 昨天,
+        }
+        response = requests.post(url, headers=headers, data=data)
+        if response.status_code == 200:
+            当月彩票有效投注 = response.json()['sumBetsAmount']
+
+        def send_request(url, data):  # 综合统计当月彩票盈利
+            # 设置请求头
+            headers = {
+                "Cookie": tk,
+            }
+
+            # 发送 POST 请求并获取响应
+            response = requests.post(url, headers=headers, data=data)
+
+            # 解析响应数据
+            if response.status_code == 200:
+                return response.json()
+            else:
+                return None
+
+        # 设置请求的 URL
+        url1 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryRebateAmount"
+        url2 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryGiftCashSysWithdrawSum"
+        url3 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryArtificial"
+        url4 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryUnderLineActivity"
+        url5 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryThirdActivity"
+        url6 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryForthActivity"
+        url7 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryRecordAmount"
+        url8 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryRecordAmount"
+        url9 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryLotteryActivity"
+        url10 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryLotteryActivity"
+        url11 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryYbInterestRecord"
+
+        # 构造请求体数据
+        data = {
+            "options": "1",
+            "startTime": 本月第一天,
+            "endTime": 昨天,
+            "type": "1",
+            "rechargeType": "15"
+        }
+        data1 = {
+            "options": "1",
+            "startTime": 本月第一天,
+            "endTime": 昨天,
+            "type": "4",
+            "rebateType": "7",
+        }
+        data2 = {
+            "options": "1",
+            "startTime": 本月第一天,
+            "endTime": 昨天,
+            "type": "3",
+        }
+        data3 = {
+            "options": "1",
+            "startTime": 本月第一天,
+            "endTime": 昨天,
+            "rebateType": "4",
+        }
+        data4 = {
+            "options": "1",
+            "startTime": 本月第一天,
+            "endTime": 昨天,
+            "type": "1",
+        }
+        data5 = {
+            "options": "1",
+            "startTime": 本月第一天,
+            "endTime": 昨天,
+            "rebateType": "6",
+        }
+
+        # 发送第一个请求
+        response1 = send_request(url1, data)
+        response2 = send_request(url2, data)
+        response3 = send_request(url3, data)
+        response4 = send_request(url4, data)
+        response5 = send_request(url5, data)
+        response6 = send_request(url6, data)
+        response7 = send_request(url7, data2)
+        response8 = send_request(url8, data1)
+        response9 = send_request(url9, data3)
+        response10 = send_request(url10, data1)
+        response11 = send_request(url11, data)
+        response12 = send_request(url7, data4)
+        response13 = send_request(url9, data5)
+
+        # 解析第一个响应数据
+        if response1 is not None:
+            当月彩票总报表 = response1['sumBetsAmount'] - response1['sumAwardAmount']  # 投注金额-中奖金额
+        else:
+            print("无法获取数据.")
+
+        if response1 is not None:
+            当月返点总额 = response1['sumRebateAmount']
+        else:
+            print("无法获取数据.")
+
+        # 初始化变量用于存储总和
+        当月活动礼金 = 0
+
+        # 遍历 response2 到 response11，累加相应的值
+        for response in [response2, response3, response4, response5, response6, response7, response8, response9,
+                         response10, response11, response12, response13]:
+            if response is not None:
+                当月活动礼金 += response.get('cusSumGiftAmount', 0) + response.get('sumRealAmount', 0)  # 活动礼金总和
+
+        当月彩票盈利 = 当月彩票总报表 - 当月活动礼金 - 当月返点总额
+
+        url = f'http://back.{port}.com/back/back/sscDataReportLottery/queryLotteryAgentLine'  # 自营彩
+        params = {
+            'limit': '99999',
+            'offset': '0',
+            'parentId': '0',
+            'options': '1',
+            'lotteryId': '0',
+            'startTime': 本月第一天,
+            'endTime': 昨天,
+        }
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code == 200:
+            data = response.json()['rows']
+            当月自营彩人数 = 0
+            当月自营彩注单量 = 0
+            当月自营彩有效投注 = 0
+            当月自营彩派奖 = 0
+            for dd in data:
+                当月自营彩人数 += dd.get('betTotal_all')
+                当月自营彩注单量 += dd.get('noteNumCount_own')
+                当月自营彩有效投注 += dd.get('betCount_own')
+                当月自营彩派奖 += dd.get('awardCount_own')
+            当月自营彩盈利 = 当月自营彩有效投注 - 当月自营彩派奖
+        else:
+            print(f"请求失败，状态码: {response.status_code}")
+
+        # 创建一个新的工作簿和工作表
+        wb = Workbook()
+        ws = wb.active
+
+        # 写入标题行
+        ws.cell(row=1, column=1, value='当日')
+        ws.cell(row=1, column=2, value='人数')
+        ws.cell(row=1, column=3, value='注单量')
+        ws.cell(row=1, column=4, value='有效投注')
+        ws.cell(row=1, column=5, value='盈利')
+
+        # 写入数据行
+        ws.cell(row=2, column=1, value='红包游戏')
+        ws.cell(row=2, column=2, value=昨日红包人数)
+        ws.cell(row=2, column=3, value=昨日红包注单量)
+        ws.cell(row=2, column=4, value=昨日红包有效投注)
+        ws.cell(row=2, column=5, value=昨日红包盈利)
+
+        ws.cell(row=3, column=1, value='棋牌')
+        ws.cell(row=3, column=2, value=昨日棋牌人数)
+        ws.cell(row=3, column=3, value=昨日棋牌注单量)
+        ws.cell(row=3, column=4, value=昨日棋牌有效投注)
+        ws.cell(row=3, column=5, value=昨日棋牌盈利)
+
+        ws.cell(row=4, column=1, value='开元')
+        ws.cell(row=4, column=2, value=昨日开元人数)
+        ws.cell(row=4, column=3, value=昨日开元注单量)
+        ws.cell(row=4, column=4, value=昨日开元有效投注)
+        ws.cell(row=4, column=5, value=昨日开元盈利)
+
+        ws.cell(row=5, column=1, value='JDB')
+        ws.cell(row=5, column=2, value=昨日JDB人数)
+        ws.cell(row=5, column=3, value=昨日JDB注单量)
+        ws.cell(row=5, column=4, value=昨日JDB有效投注)
+        ws.cell(row=5, column=5, value=昨日JDB盈利)
+
+        ws.cell(row=6, column=1, value='AG')
+        ws.cell(row=6, column=2, value=昨日AG人数)
+        ws.cell(row=6, column=3, value=昨日AG注单量)
+        ws.cell(row=6, column=4, value=昨日AG有效投注)
+        ws.cell(row=6, column=5, value=昨日AG盈利)
+
+        ws.cell(row=7, column=1, value='彩票')
+        ws.cell(row=7, column=2, value=昨日彩票人数)
+        ws.cell(row=7, column=3, value=昨日彩票注单量)
+        ws.cell(row=7, column=4, value=昨日彩票有效投注)
+        ws.cell(row=7, column=5, value=昨日彩票盈利)
+
+        ws.cell(row=8, column=1, value='自营彩')
+        ws.cell(row=8, column=2, value=昨日自营彩人数)
+        ws.cell(row=8, column=3, value=昨日自营彩注单量)
+        ws.cell(row=8, column=4, value=昨日自营彩有效投注)
+        ws.cell(row=8, column=5, value=昨日自营彩盈利)
+
+        # 写入标题行
+        ws.cell(row=1, column=7, value='当月')
+        ws.cell(row=1, column=8, value='人数')
+        ws.cell(row=1, column=9, value='注单量')
+        ws.cell(row=1, column=10, value='有效投注')
+        ws.cell(row=1, column=11, value='盈利')
+
+        # 写入数据行
+        ws.cell(row=2, column=7, value='红包游戏')
+        ws.cell(row=2, column=8, value=当月红包人数)
+        ws.cell(row=2, column=9, value=当月红包注单量)
+        ws.cell(row=2, column=10, value=当月红包有效投注)
+        ws.cell(row=2, column=11, value=当月红包盈利)
+
+        ws.cell(row=3, column=7, value='棋牌')
+        ws.cell(row=3, column=8, value=当月棋牌人数)
+        ws.cell(row=3, column=9, value=当月棋牌注单量)
+        ws.cell(row=3, column=10, value=当月棋牌有效投注)
+        ws.cell(row=3, column=11, value=当月棋牌盈利)
+
+        ws.cell(row=4, column=7, value='开元')
+        ws.cell(row=4, column=8, value=当月开元人数)
+        ws.cell(row=4, column=9, value=当月开元注单量)
+        ws.cell(row=4, column=10, value=当月开元有效投注)
+        ws.cell(row=4, column=11, value=当月开元盈利)
+
+        ws.cell(row=5, column=7, value='JDB')
+        ws.cell(row=5, column=8, value=当月JDB人数)
+        ws.cell(row=5, column=9, value=当月JDB注单量)
+        ws.cell(row=5, column=10, value=当月JDB有效投注)
+        ws.cell(row=5, column=11, value=当月JDB盈利)
+
+        ws.cell(row=6, column=7, value='AG')
+        ws.cell(row=6, column=8, value=当月AG人数)
+        ws.cell(row=6, column=9, value=当月AG注单量)
+        ws.cell(row=6, column=10, value=当月AG有效投注)
+        ws.cell(row=6, column=11, value=当月AG盈利)
+
+        ws.cell(row=7, column=7, value='彩票')
+        ws.cell(row=7, column=8, value=当月彩票人数)
+        ws.cell(row=7, column=9, value=当月彩票注单量)
+        ws.cell(row=7, column=10, value=当月彩票有效投注)
+        ws.cell(row=7, column=11, value=当月彩票盈利)
+
+        ws.cell(row=8, column=7, value='自营彩')
+        ws.cell(row=8, column=8, value=当月自营彩人数)
+        ws.cell(row=8, column=9, value=当月自营彩注单量)
+        ws.cell(row=8, column=10, value=当月自营彩有效投注)
+        ws.cell(row=8, column=11, value=当月自营彩盈利)
+
+        # 保存工作簿
+        wb.save("彩票游戏报表.xlsx")
+        # 自动打开表格
+        os.startfile('彩票游戏报表.xlsx')
+
+    except Exception as e:
+        messagebox.showerror("错误", str(e))
+
+# 创建主窗口
+root = tk.Tk()
+root.title("获取彩票平台游戏报表")
+root.geometry("330x150")  # 设置窗口大小
+
+# 设置字体
+font_style = ("Helvetica", 12)
+font_styl = ("Helvetica", 15)
+# 创建标签和输入框
+label_port = tk.Label(root, text="请输入端口:", font=font_style)
+label_port.grid(row=0, column=0, padx=10, pady=5, sticky='e')  # 添加水平和垂直边距
+
+entry_port = tk.Entry(root, font=font_style)
+entry_port.grid(row=0, column=1, padx=10, pady=5)
+
+label_password = tk.Label(root, text="请输入密码:", font=font_style,)
+label_password.grid(row=1, column=0, padx=10, pady=5, sticky='e')
+
+entry_password = tk.Entry(root,font=font_style)
+entry_password.grid(row=1, column=1, padx=10, pady=5)
+
+submit_button = tk.Button(root, text="提交查询", command=run_script, font=font_styl, fg='red')
+submit_button.grid(row=2, columnspan=2, pady=10)
+
+# 运行主循环
+root.mainloop()
