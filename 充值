@@ -1,0 +1,767 @@
+import sys
+from PyQt5.QtWidgets import QApplication, QWidget, QLineEdit, QPushButton, QMessageBox, QDateEdit
+from configparser import ConfigParser
+import requests
+from datetime import datetime, timedelta
+from openpyxl import Workbook
+import os
+import openpyxl
+
+
+class LoginWindow(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.initUI()
+
+        # 设置允许使用的截止时间 (YYYY-MM-DD HH:MM:SS)
+        self.expiration_date_str = "2027-02-25 23:59:59"  # 软件过期时间
+        self.expiration_date = datetime.strptime(self.expiration_date_str, "%Y-%m-%d %H:%M:%S")
+
+        # 检查是否需要提醒
+        remaining_days = self.get_remaining_days()
+        if remaining_days > 0 and remaining_days <= 7:
+            QMessageBox.warning(self, "软件即将更新",
+                                f"本软件将在{remaining_days}天后自动更新：\n请联系《富贵》获取最新版本。")
+
+        # 检查是否过期
+        if self.is_expired():
+            QMessageBox.critical(self, "软件已更新", f"你的应用版本过低：\n请联系《富贵》获取最新版本。")
+            sys.exit(0)  # 退出程序
+
+    def is_expired(self):
+        """检查当前时间是否超过指定的截止时间"""
+        current_time = datetime.now()  # 获取当前系统时间
+        return current_time > self.expiration_date
+
+    def get_remaining_days(self):
+        """计算距离过期时间还有多少天"""
+        current_time = datetime.now()  # 获取当前系统时间
+        days_left = (self.expiration_date - current_time).days  # 计算剩余天数
+        return days_left  # 返回剩余的天数
+
+    def initUI(self):  # 初始化界面
+        self.setWindowTitle('彩票充值_数据库__彩票通用__版本20250405')
+        self.setGeometry(100, 100, 500, 600)
+
+        # 创建账号输入框
+        self.srk_channel = QLineEdit(self)
+        self.srk_channel.setPlaceholderText('渠道')
+        self.srk_channel.setGeometry(50, 20, 400, 40)
+
+        # 创建账号输入框
+        self.srk_port = QLineEdit(self)
+        self.srk_port.setPlaceholderText('port')
+        self.srk_port.setGeometry(50, 80, 400, 40)
+
+        # 创建密码输入框
+        self.srk_token = QLineEdit(self)
+        self.srk_token.setPlaceholderText('token')
+        self.srk_token.setGeometry(50, 140, 400, 40)
+
+        # 创建手动保存按钮
+        self.save_button = QPushButton("保存配置", self)
+        self.save_button.setGeometry(150, 200, 200, 40)
+        self.save_button.clicked.connect(self.manual_save)
+
+        # 创建获取数据按钮
+        self.submit_button = QPushButton('默认获取昨日数据', self)
+        self.submit_button.setGeometry(150, 260, 200, 40)
+        self.submit_button.clicked.connect(self.print_accoun)
+
+        # 开始时间
+        self.srk_kssj = QDateEdit(self)
+        self.srk_kssj.setCalendarPopup(True)
+        self.srk_kssj.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+        self.srk_kssj.setGeometry(120, 320, 250, 40)
+
+        # 结束时间
+        self.srk_jssj = QDateEdit(self)
+        self.srk_jssj.setCalendarPopup(True)
+        self.srk_jssj.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+        self.srk_jssj.setGeometry(120, 380, 250, 40)
+
+        # 设置默认日期
+        current_date = datetime.now().date()
+        self.srk_kssj.setDate(current_date)
+        self.srk_jssj.setDate(current_date)
+
+        # 创建获取数据按钮
+        self.submit_button = QPushButton('选时间获取数据', self)
+        self.submit_button.setGeometry(120, 440, 250, 40)
+        self.submit_button.clicked.connect(self.print_account)
+
+        self.load_config()
+
+    def save_config(self, port, token, channel):  # 保存配置到文件
+        config = ConfigParser()
+        config['USER'] = {'Port': port, 'Token': token, 'channel': channel}
+        with open('config.ini', 'w') as configfile:
+            config.write(configfile)
+
+    def load_config(self):  # 从文件加载配置
+        config = ConfigParser()
+        config.read('config.ini')
+        if 'USER' in config:
+            self.srk_port.setText(config['USER']['Port'])
+            self.srk_token.setText(config['USER']['Token'])
+            self.srk_channel.setText(config['USER']['channel'])
+
+    def print_accoun(self):  # 默认获取昨日数据
+        try:
+            port = self.srk_port.text().strip()
+            token = self.srk_token.text().strip()
+            channel = self.srk_channel.text().strip()
+
+            # 检查必填字段
+            if not port or not token or not channel:
+                QMessageBox.warning(self, '输入错误', '请确保所有输入框都已填写')
+                return
+
+            # 获取当前时间
+            current_time = datetime.now()
+
+            # 计算昨日时间
+            yesterday_time = current_time - timedelta(days=1)
+            yesterday = current_time - timedelta(days=0)
+
+            # 格式化昨日时间为年月日时分秒
+            昨天 = yesterday_time.strftime("%Y-%m-%d 00:00:00")
+            今天 = yesterday.strftime("%Y-%m-%d 00:00:00")
+
+            headers = {
+                "Cookie": token,
+            }
+
+            # 账变购买GP入款链接
+            url = f"http://back.{port}.com/back/back/sscRisk/coinLogList"
+            params = {
+                "limit": "9999",
+                "offset": "0",
+                "liqType": "65",
+                "istest": "0",
+                "username": "",
+                "startTime": 昨天,
+                "endTime": 今天,
+            }
+
+            # 发送第一个HTTP请求
+            response = requests.get(url, headers=headers, params=params)
+
+            # 处理第一个HTTP响应
+            if response.status_code == 200:
+                data = response.json()['rows']
+
+                wb = Workbook()
+                ws = wb.active
+                ws.append(['渠道', '用户', '支付方式', '首充', '金额', '内部订单号', '创建时间', '支付时间', '发货时间',
+                           '后台备注', ])
+
+                # 获取开始写入数据的行数，第一个任务从第二行开始写入
+                start_row = 2
+
+                # 写入数据到对应行
+                for row_idx, ddd in enumerate(data, start=start_row):
+                    入款账户 = ddd.get('username')
+                    渠道 = ddd.get('info')
+                    金额 = ddd.get('coin')
+                    订单 = ddd.get('orderId')
+                    创建时间 = datetime.fromtimestamp(int(ddd.get('actionTime')) / 1000)
+                    操作时间 = datetime.fromtimestamp(int(ddd.get('actionTime')) / 1000)
+
+                    # 将数据写入Excel文件
+                    ws.cell(row=row_idx, column=1).value = channel
+                    ws.cell(row=row_idx, column=2).value = 入款账户
+                    ws.cell(row=row_idx, column=3).value = 渠道
+                    ws.cell(row=row_idx, column=4).value = ''
+                    ws.cell(row=row_idx, column=5).value = 金额
+                    ws.cell(row=row_idx, column=6).value = 订单
+                    ws.cell(row=row_idx, column=7).value = 创建时间
+                    ws.cell(row=row_idx, column=8).value = 操作时间
+                    ws.cell(row=row_idx, column=9).value = 操作时间
+
+                # 保存Excel文件
+                wb.save('会员充值.xlsx')
+
+            昨天天 = yesterday_time.strftime("%Y-%m-%d")
+            # 公司入款链接
+            url = f"http://back.{port}.com/back/back/sscRechargeOrder/sscRechargeOrderList"
+            params = {
+                "limit": "9999",
+                "offset": "0",
+                "status": "2",
+                "istest": "0",
+                "startUpdate": 昨天天,
+                "endUpdate": 昨天天,
+            }
+
+            # 发送第二个HTTP请求
+            response = requests.get(url, headers=headers, params=params)
+
+            # 处理第二个HTTP响应
+            if response.status_code == 200:
+                data = response.json()['rows']
+
+                # 加载现有的Excel文件
+                wb = openpyxl.load_workbook('会员充值.xlsx')
+                ws = wb.active
+
+                # 获取开始写入数据的行数，第二个任务从已有数据的下一行开始写入
+                start_row = ws.max_row + 1
+
+                # 写入数据到对应行
+                for row_idx, ddd in enumerate(data, start=start_row):
+                    入款账户 = ddd.get('viewusername')
+                    渠道 = ddd.get('bankCode')
+                    金额 = ddd.get('amount')
+                    订单 = ddd.get('orderId')
+                    创建时间 = datetime.fromtimestamp(int(ddd.get('updateTime')) / 1000)
+                    操作时间 = datetime.fromtimestamp(int(ddd.get('orderDate')) / 1000)
+
+                    # 将数据写入Excel文件
+                    ws.cell(row=row_idx, column=1).value = channel
+                    ws.cell(row=row_idx, column=2).value = 入款账户
+                    ws.cell(row=row_idx, column=3).value = 渠道
+                    ws.cell(row=row_idx, column=4).value = ''
+                    ws.cell(row=row_idx, column=5).value = 金额
+                    ws.cell(row=row_idx, column=6).value = 订单
+                    ws.cell(row=row_idx, column=7).value = 创建时间
+                    ws.cell(row=row_idx, column=8).value = 操作时间
+                    ws.cell(row=row_idx, column=9).value = 操作时间
+
+                # 保存Excel文件
+                wb.save('会员充值.xlsx')
+
+            # 第三方入款链接
+            url = f"http://back.{port}.com/back/back/sscRechargeOrderThird/sscRechargeOrderThirdList"
+            params = {
+                "limit": "9999",
+                "offset": "0",
+                "status": "2",
+                "istest": "0",
+                "startUpdate": 昨天,
+                "endUpdate": 今天,
+            }
+
+            # 发送第一个HTTP请求
+            response = requests.get(url, headers=headers, params=params)
+
+            # 处理第一个HTTP响应
+            if response.status_code == 200:
+                data = response.json()['rows']
+                # 加载现有的Excel文件
+                wb = openpyxl.load_workbook('会员充值.xlsx')
+                ws = wb.active
+
+                # 获取开始写入数据的行数，第二个任务从已有数据的下一行开始写入
+                start_row = ws.max_row + 1
+
+                # 写入数据到对应行
+                for row_idx, ddd in enumerate(data, start=start_row):  # 从第二行开始写入数据
+                    入款账户 = ddd.get('username')
+                    渠道 = ddd.get('channelName')
+                    金额 = ddd.get('amount')
+                    订单 = ddd.get('orderId')
+                    创建时间 = datetime.fromtimestamp(int(ddd.get('reqTime')) / 1000)
+                    操作时间 = datetime.fromtimestamp(int(ddd.get('updatetime')) / 1000)
+
+                    # 将数据写入Excel文件
+                    ws.cell(row=row_idx, column=1).value = channel
+                    ws.cell(row=row_idx, column=2).value = 入款账户
+                    ws.cell(row=row_idx, column=3).value = 渠道
+                    ws.cell(row=row_idx, column=4).value = ''
+                    ws.cell(row=row_idx, column=5).value = 金额
+                    ws.cell(row=row_idx, column=6).value = 订单
+                    ws.cell(row=row_idx, column=7).value = 创建时间
+                    ws.cell(row=row_idx, column=8).value = 操作时间
+                    ws.cell(row=row_idx, column=9).value = 操作时间
+
+                # 保存Excel文件
+                wb.save('会员充值.xlsx')
+
+            # 账变红包入款链接
+            url = f"http://back.{port}.com/back/back/sscRisk/coinLogList"
+            params = {
+                "limit": "9999",
+                "offset": "0",
+                "liqType": "34",
+                "istest": "0",
+                "username": "",
+                "startTime": 昨天,
+                "endTime": 今天,
+            }
+
+            # 发送第一个HTTP请求
+            response = requests.get(url, headers=headers, params=params)
+
+            # 处理第一个HTTP响应
+            if response.status_code == 200:
+                data = response.json()['rows']
+                # 加载现有的Excel文件
+                wb = openpyxl.load_workbook('会员充值.xlsx')
+                ws = wb.active
+
+                # 获取开始写入数据的行数，第二个任务从已有数据的下一行开始写入
+                start_row = ws.max_row + 1
+
+                # 写入数据到对应行
+                for row_idx, ddd in enumerate(data, start=start_row):
+                    入款账户 = ddd.get('username')
+                    渠道 = ddd.get('info')
+                    金额 = ddd.get('coin')
+                    订单 = ddd.get('orderId')
+                    创建时间 = datetime.fromtimestamp(int(ddd.get('actionTime')) / 1000)
+                    操作时间 = datetime.fromtimestamp(int(ddd.get('actionTime')) / 1000)
+
+                    # 将数据写入Excel文件
+                    ws.cell(row=row_idx, column=1).value = channel
+                    ws.cell(row=row_idx, column=2).value = 入款账户
+                    ws.cell(row=row_idx, column=3).value = 渠道
+                    ws.cell(row=row_idx, column=4).value = ''
+                    ws.cell(row=row_idx, column=5).value = 金额
+                    ws.cell(row=row_idx, column=6).value = 订单
+                    ws.cell(row=row_idx, column=7).value = 创建时间
+                    ws.cell(row=row_idx, column=8).value = 操作时间
+                    ws.cell(row=row_idx, column=9).value = 操作时间
+
+                # 保存Excel文件
+                wb.save('会员充值.xlsx')
+
+            # USDT入款链接
+            url = f"http://back.{port}.com/back/back/sscDigiccyOrder/sscDigiccyOrderList"
+            params = {
+                "limit": "9999",
+                "offset": "0",
+                "status": "2",
+                "istest": "0",
+                "startUpdate": 昨天,
+                "endUpdate": 今天,
+            }
+
+            # 发送第一个HTTP请求
+            response = requests.get(url, headers=headers, params=params)
+
+            # 处理第一个HTTP响应
+            if response.status_code == 200:
+                data = response.json()['rows']
+                # 加载现有的Excel文件
+                wb = openpyxl.load_workbook('会员充值.xlsx')
+                ws = wb.active
+
+                # 获取开始写入数据的行数，第一个任务从第二行开始写入
+                start_row = ws.max_row + 1
+
+                # 写入数据到对应行
+                for row_idx, ddd in enumerate(data, start=start_row):
+                    入款账户 = ddd.get('userName')
+                    渠道 = ddd.get('digiccyType')
+                    金额 = ddd.get('cnyAmount')
+                    订单 = ddd.get('orderId')
+                    创建时间 = datetime.fromtimestamp(int(ddd.get('orderTime')) / 1000)
+                    操作时间 = datetime.fromtimestamp(int(ddd.get('updateTime')) / 1000)
+
+                    # 将数据写入Excel文件
+                    ws.cell(row=row_idx, column=1).value = channel
+                    ws.cell(row=row_idx, column=2).value = 入款账户
+                    ws.cell(row=row_idx, column=3).value = 渠道
+                    ws.cell(row=row_idx, column=4).value = ''
+                    ws.cell(row=row_idx, column=5).value = 金额
+                    ws.cell(row=row_idx, column=6).value = 订单
+                    ws.cell(row=row_idx, column=7).value = 创建时间
+                    ws.cell(row=row_idx, column=8).value = 操作时间
+                    ws.cell(row=row_idx, column=9).value = 操作时间
+
+                # 保存Excel文件
+                wb.save('会员充值.xlsx')
+
+            # 账变人工入款链接
+            url = f"http://back.{port}.com/back/back/sscRisk/coinLogList"
+            params = {
+                "limit": "9999",
+                "offset": "0",
+                "liqType": "14",
+                "istest": "0",
+                "username": "",
+                "startTime": 昨天,
+                "endTime": 今天,
+            }
+
+            # 发送第一个HTTP请求
+            response = requests.get(url, headers=headers, params=params)
+
+            # 处理第一个HTTP响应
+            if response.status_code == 200:
+                data = response.json()['rows']
+                # 加载现有的Excel文件
+                wb = openpyxl.load_workbook('会员充值.xlsx')
+                ws = wb.active
+
+                # 获取开始写入数据的行数，第二个任务从已有数据的下一行开始写入
+                start_row = ws.max_row + 1
+
+                # 写入数据到对应行
+                for row_idx, ddd in enumerate(data, start=start_row):
+                    入款账户 = ddd.get('username')
+                    渠道 = ddd.get('info')
+                    金额 = ddd.get('coin')
+                    订单 = ddd.get('orderId')
+                    创建时间 = datetime.fromtimestamp(int(ddd.get('actionTime')) / 1000)
+                    操作时间 = datetime.fromtimestamp(int(ddd.get('actionTime')) / 1000)
+
+                    # 将数据写入Excel文件
+                    ws.cell(row=row_idx, column=1).value = channel
+                    ws.cell(row=row_idx, column=2).value = 入款账户
+                    ws.cell(row=row_idx, column=3).value = 渠道
+                    ws.cell(row=row_idx, column=4).value = ''
+                    ws.cell(row=row_idx, column=5).value = 金额
+                    ws.cell(row=row_idx, column=6).value = 订单
+                    ws.cell(row=row_idx, column=7).value = 创建时间
+                    ws.cell(row=row_idx, column=8).value = 操作时间
+                    ws.cell(row=row_idx, column=9).value = 操作时间
+
+                # 保存Excel文件
+                wb.save('会员充值.xlsx')
+                os.startfile('会员充值.xlsx')
+
+        except Exception as e:
+            QMessageBox.critical(self, "错误", str(e))
+
+    def print_account(self):  # 选时间获取数据
+        try:
+            port = self.srk_port.text().strip()
+            token = self.srk_token.text().strip()
+            channel = self.srk_channel.text().strip()
+
+            # 检查必填字段
+            if not port or not token or not channel:
+                QMessageBox.warning(self, '输入错误', '请确保所有输入框都已填写')
+                return
+
+            # 从界面输入控件获取开始时间和结束时间
+            ks = self.srk_kssj.dateTime().toString("yyyy-MM-dd HH:mm:ss")
+            js = self.srk_jssj.dateTime().toString("yyyy-MM-dd HH:mm:ss")
+
+            # 检查结束时间是否比开始时间早
+            if js < ks:
+                QMessageBox.warning(self, '警告', '结束时间不能早于开始时间')
+                return
+
+            # 将获取到的时间字符串转换为 Python 的 datetime 对象
+            昨天 = datetime.strptime(ks, '%Y-%m-%d %H:%M:%S')
+            今天 = datetime.strptime(js, '%Y-%m-%d %H:%M:%S')
+            print(昨天, 今天)
+
+            headers = {
+                "Cookie": token,
+            }
+
+            # 账变购买GP入款链接
+            url = f"http://back.{port}.com/back/back/sscRisk/coinLogList"
+            params = {
+                "limit": "9999",
+                "offset": "0",
+                "liqType": "65",
+                "istest": "0",
+                "username": "",
+                "startTime": 昨天,
+                "endTime": 今天,
+            }
+
+            # 发送第一个HTTP请求
+            response = requests.get(url, headers=headers, params=params)
+
+            # 处理第一个HTTP响应
+            if response.status_code == 200:
+                data = response.json()['rows']
+
+                wb = Workbook()
+                ws = wb.active
+                ws.append(['渠道', '用户', '支付方式', '首充', '金额', '内部订单号', '创建时间', '支付时间', '发货时间',
+                           '后台备注', ])
+
+                # 获取开始写入数据的行数，第一个任务从第二行开始写入
+                start_row = 2
+
+                # 写入数据到对应行
+                for row_idx, ddd in enumerate(data, start=start_row):
+                    入款账户 = ddd.get('username')
+                    渠道 = ddd.get('info')
+                    金额 = ddd.get('coin')
+                    订单 = ddd.get('orderId')
+                    创建时间 = datetime.fromtimestamp(int(ddd.get('actionTime')) / 1000)
+                    操作时间 = datetime.fromtimestamp(int(ddd.get('actionTime')) / 1000)
+
+                    # 将数据写入Excel文件
+                    ws.cell(row=row_idx, column=1).value = channel
+                    ws.cell(row=row_idx, column=2).value = 入款账户
+                    ws.cell(row=row_idx, column=3).value = 渠道
+                    ws.cell(row=row_idx, column=4).value = ''
+                    ws.cell(row=row_idx, column=5).value = 金额
+                    ws.cell(row=row_idx, column=6).value = 订单
+                    ws.cell(row=row_idx, column=7).value = 创建时间
+                    ws.cell(row=row_idx, column=8).value = 操作时间
+                    ws.cell(row=row_idx, column=9).value = 操作时间
+
+                # 保存Excel文件
+                wb.save('会员充值.xlsx')
+
+            昨天天 = 昨天.strftime("%Y-%m-%d")
+            # 公司入款链接
+            url = f"http://back.{port}.com/back/back/sscRechargeOrder/sscRechargeOrderList"
+            params = {
+                "limit": "9999",
+                "offset": "0",
+                "status": "2",
+                "istest": "0",
+                "startUpdate": 昨天天,
+                "endUpdate": 昨天天,
+            }
+
+            # 发送第二个HTTP请求
+            response = requests.get(url, headers=headers, params=params)
+
+            # 处理第二个HTTP响应
+            if response.status_code == 200:
+                data = response.json()['rows']
+
+                # 加载现有的Excel文件
+                wb = openpyxl.load_workbook('会员充值.xlsx')
+                ws = wb.active
+
+                # 获取开始写入数据的行数，第二个任务从已有数据的下一行开始写入
+                start_row = ws.max_row + 1
+
+                # 写入数据到对应行
+                for row_idx, ddd in enumerate(data, start=start_row):
+                    入款账户 = ddd.get('viewusername')
+                    渠道 = ddd.get('bankCode')
+                    金额 = ddd.get('amount')
+                    订单 = ddd.get('orderId')
+                    创建时间 = datetime.fromtimestamp(int(ddd.get('updateTime')) / 1000)
+                    操作时间 = datetime.fromtimestamp(int(ddd.get('orderDate')) / 1000)
+
+                    # 将数据写入Excel文件
+                    ws.cell(row=row_idx, column=1).value = channel
+                    ws.cell(row=row_idx, column=2).value = 入款账户
+                    ws.cell(row=row_idx, column=3).value = 渠道
+                    ws.cell(row=row_idx, column=4).value = ''
+                    ws.cell(row=row_idx, column=5).value = 金额
+                    ws.cell(row=row_idx, column=6).value = 订单
+                    ws.cell(row=row_idx, column=7).value = 创建时间
+                    ws.cell(row=row_idx, column=8).value = 操作时间
+                    ws.cell(row=row_idx, column=9).value = 操作时间
+
+                # 保存Excel文件
+                wb.save('会员充值.xlsx')
+
+            # 第三方入款链接
+            url = f"http://back.{port}.com/back/back/sscRechargeOrderThird/sscRechargeOrderThirdList"
+            params = {
+                "limit": "9999",
+                "offset": "0",
+                "status": "2",
+                "istest": "0",
+                "startUpdate": 昨天,
+                "endUpdate": 今天,
+            }
+
+            # 发送第一个HTTP请求
+            response = requests.get(url, headers=headers, params=params)
+
+            # 处理第一个HTTP响应
+            if response.status_code == 200:
+                data = response.json()['rows']
+                # 加载现有的Excel文件
+                wb = openpyxl.load_workbook('会员充值.xlsx')
+                ws = wb.active
+
+                # 获取开始写入数据的行数，第二个任务从已有数据的下一行开始写入
+                start_row = ws.max_row + 1
+
+                # 写入数据到对应行
+                for row_idx, ddd in enumerate(data, start=start_row):  # 从第二行开始写入数据
+                    入款账户 = ddd.get('username')
+                    渠道 = ddd.get('channelName')
+                    金额 = ddd.get('amount')
+                    订单 = ddd.get('orderId')
+                    创建时间 = datetime.fromtimestamp(int(ddd.get('reqTime')) / 1000)
+                    操作时间 = datetime.fromtimestamp(int(ddd.get('updatetime')) / 1000)
+
+                    # 将数据写入Excel文件
+                    ws.cell(row=row_idx, column=1).value = channel
+                    ws.cell(row=row_idx, column=2).value = 入款账户
+                    ws.cell(row=row_idx, column=3).value = 渠道
+                    ws.cell(row=row_idx, column=4).value = ''
+                    ws.cell(row=row_idx, column=5).value = 金额
+                    ws.cell(row=row_idx, column=6).value = 订单
+                    ws.cell(row=row_idx, column=7).value = 创建时间
+                    ws.cell(row=row_idx, column=8).value = 操作时间
+                    ws.cell(row=row_idx, column=9).value = 操作时间
+
+                # 保存Excel文件
+                wb.save('会员充值.xlsx')
+
+            # 账变红包入款链接
+            url = f"http://back.{port}.com/back/back/sscRisk/coinLogList"
+            params = {
+                "limit": "9999",
+                "offset": "0",
+                "liqType": "34",
+                "istest": "0",
+                "username": "",
+                "startTime": 昨天,
+                "endTime": 今天,
+            }
+
+            # 发送第一个HTTP请求
+            response = requests.get(url, headers=headers, params=params)
+
+            # 处理第一个HTTP响应
+            if response.status_code == 200:
+                data = response.json()['rows']
+                # 加载现有的Excel文件
+                wb = openpyxl.load_workbook('会员充值.xlsx')
+                ws = wb.active
+
+                # 获取开始写入数据的行数，第二个任务从已有数据的下一行开始写入
+                start_row = ws.max_row + 1
+
+                # 写入数据到对应行
+                for row_idx, ddd in enumerate(data, start=start_row):
+                    入款账户 = ddd.get('username')
+                    渠道 = ddd.get('info')
+                    金额 = ddd.get('coin')
+                    订单 = ddd.get('orderId')
+                    创建时间 = datetime.fromtimestamp(int(ddd.get('actionTime')) / 1000)
+                    操作时间 = datetime.fromtimestamp(int(ddd.get('actionTime')) / 1000)
+
+                    # 将数据写入Excel文件
+                    ws.cell(row=row_idx, column=1).value = channel
+                    ws.cell(row=row_idx, column=2).value = 入款账户
+                    ws.cell(row=row_idx, column=3).value = 渠道
+                    ws.cell(row=row_idx, column=4).value = ''
+                    ws.cell(row=row_idx, column=5).value = 金额
+                    ws.cell(row=row_idx, column=6).value = 订单
+                    ws.cell(row=row_idx, column=7).value = 创建时间
+                    ws.cell(row=row_idx, column=8).value = 操作时间
+                    ws.cell(row=row_idx, column=9).value = 操作时间
+
+                # 保存Excel文件
+                wb.save('会员充值.xlsx')
+
+            # USDT入款链接
+            url = f"http://back.{port}.com/back/back/sscDigiccyOrder/sscDigiccyOrderList"
+            params = {
+                "limit": "9999",
+                "offset": "0",
+                "status": "2",
+                "istest": "0",
+                "startUpdate": 昨天,
+                "endUpdate": 今天,
+            }
+
+            # 发送第一个HTTP请求
+            response = requests.get(url, headers=headers, params=params)
+
+            # 处理第一个HTTP响应
+            if response.status_code == 200:
+                data = response.json()['rows']
+                # 加载现有的Excel文件
+                wb = openpyxl.load_workbook('会员充值.xlsx')
+                ws = wb.active
+
+                # 获取开始写入数据的行数，第一个任务从第二行开始写入
+                start_row = ws.max_row + 1
+
+                # 写入数据到对应行
+                for row_idx, ddd in enumerate(data, start=start_row):
+                    入款账户 = ddd.get('userName')
+                    渠道 = ddd.get('digiccyType')
+                    金额 = ddd.get('cnyAmount')
+                    订单 = ddd.get('orderId')
+                    创建时间 = datetime.fromtimestamp(int(ddd.get('orderTime')) / 1000)
+                    操作时间 = datetime.fromtimestamp(int(ddd.get('updateTime')) / 1000)
+
+                    # 将数据写入Excel文件
+                    ws.cell(row=row_idx, column=1).value = channel
+                    ws.cell(row=row_idx, column=2).value = 入款账户
+                    ws.cell(row=row_idx, column=3).value = 渠道
+                    ws.cell(row=row_idx, column=4).value = ''
+                    ws.cell(row=row_idx, column=5).value = 金额
+                    ws.cell(row=row_idx, column=6).value = 订单
+                    ws.cell(row=row_idx, column=7).value = 创建时间
+                    ws.cell(row=row_idx, column=8).value = 操作时间
+                    ws.cell(row=row_idx, column=9).value = 操作时间
+
+                # 保存Excel文件
+                wb.save('会员充值.xlsx')
+
+            # 账变人工入款链接
+            url = f"http://back.{port}.com/back/back/sscRisk/coinLogList"
+            params = {
+                "limit": "9999",
+                "offset": "0",
+                "liqType": "14",
+                "istest": "0",
+                "username": "",
+                "startTime": 昨天,
+                "endTime": 今天,
+            }
+
+            # 发送第一个HTTP请求
+            response = requests.get(url, headers=headers, params=params)
+
+            # 处理第一个HTTP响应
+            if response.status_code == 200:
+                data = response.json()['rows']
+                # 加载现有的Excel文件
+                wb = openpyxl.load_workbook('会员充值.xlsx')
+                ws = wb.active
+
+                # 获取开始写入数据的行数，第二个任务从已有数据的下一行开始写入
+                start_row = ws.max_row + 1
+
+                # 写入数据到对应行
+                for row_idx, ddd in enumerate(data, start=start_row):
+                    入款账户 = ddd.get('username')
+                    渠道 = ddd.get('info')
+                    金额 = ddd.get('coin')
+                    订单 = ddd.get('orderId')
+                    创建时间 = datetime.fromtimestamp(int(ddd.get('actionTime')) / 1000)
+                    操作时间 = datetime.fromtimestamp(int(ddd.get('actionTime')) / 1000)
+
+                    # 将数据写入Excel文件
+                    ws.cell(row=row_idx, column=1).value = channel
+                    ws.cell(row=row_idx, column=2).value = 入款账户
+                    ws.cell(row=row_idx, column=3).value = 渠道
+                    ws.cell(row=row_idx, column=4).value = ''
+                    ws.cell(row=row_idx, column=5).value = 金额
+                    ws.cell(row=row_idx, column=6).value = 订单
+                    ws.cell(row=row_idx, column=7).value = 创建时间
+                    ws.cell(row=row_idx, column=8).value = 操作时间
+                    ws.cell(row=row_idx, column=9).value = 操作时间
+
+                # 保存Excel文件
+                wb.save('会员充值.xlsx')
+                os.startfile('会员充值.xlsx')
+
+        except Exception as e:
+            QMessageBox.critical(self, "错误", str(e))
+
+    def manual_save(self):  # 手动保存配置
+        port = self.srk_port.text()
+        token = self.srk_token.text()
+        channel = self.srk_channel.text()
+
+        if not (port and token and channel):
+            QMessageBox.warning(self, "输入错误", "请填写所有字段！")
+            return
+
+        self.save_config(port, token, channel)
+        QMessageBox.information(self, "提示", "配置已保存！")
+
+
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    login_window = LoginWindow()
+    login_window.show()
+    sys.exit(app.exec_())
