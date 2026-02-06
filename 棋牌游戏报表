@@ -1,0 +1,221 @@
+import requests
+import pandas as pd
+import csv
+from datetime import datetime, timedelta
+import subprocess
+import tkinter as tk
+from tkinter import messagebox
+
+current_date = datetime.now()
+yesterday = current_date - timedelta(days=1)
+end_date = yesterday.strftime("%Y%m%d")
+
+def run_script():
+    try:
+        token = entry_password.get()  # 获取 Cookie
+
+        headers = {
+            "Authorization": token,
+        }
+
+        # 平台代码映射
+        platform_code_mapping = {
+            "SSOCHESS": "乐游棋牌",
+            "KYQP": "开元棋牌",
+            "FGQP": "FG棋牌",
+            "VG": "VG棋牌",
+            "NWG": "新世界棋牌",
+            "MTQP": "美天棋牌",
+            "SGWIN": "双赢棋牌",
+            "THQP": "天豪棋牌",
+            "BSQP": "百胜棋牌",
+            "MGG": "MGG红包",
+            "JDB_BY_DF": "龙王捕鱼I",
+            "FGBYZJ": "雷霆战警",
+            "FGBY3D": "捕鱼嘉年华3D",
+            "FGBYBN": "FG捕鸟达人",
+            "FGBYHL": "欢乐捕鱼",
+            "FGBYMM": "美人捕鱼",
+            "JDB_BY_DF_II": "龙王捕鱼II",
+            "BGBYDS": "大师捕鱼",
+            "BGBYXY": "西游捕鱼",
+            "FGBYMF": "魔法王者",
+            "FGBYLS3D": "猎鼠达人3D",
+            "FGBYMR": "美人鱼传说",
+            "MT3DBY": "MT3D捕鱼",
+            "MTLKPY": "MT李逵劈鱼",
+            "MTJCBY": "金蝉捕鱼",
+            "SGBYTW": "捕鱼天王",
+            "THJCBY": "金蟾捕鱼",
+            "THDNTG1": "大闹天宫1",
+            "THDNTG2": "大闹天宫2",
+            "THLKBY": "TH李逵劈鱼",
+            "THDSBY": "大圣捕鱼",
+            "THXLDB": "寻龙夺宝",
+            "THJCBYDLC": "金蟾海王2",
+            "THDHLW": "TH3D捕鱼",
+            "THBNDR": "TH捕鸟达人",
+            "MTFKBY": "疯狂捕鱼",
+            "SGBYDZ": "捕鱼大战",
+            "WBCSBY": "财神捕鱼",
+            "JDB_BY_YLF": "捕鱼一路发",
+            "MTHW2": "海王2",
+            "MTPYLL": "捕鱼来了",
+            "THPYDLD": "捕鱼大乱斗",
+            "THXYBY": "西游捕鱼",
+            "BSBYWZW": "捕鱼王中王",
+            "BS3DHDLL": "3D海盗来了",
+            "BS3DMRY": "3D美人渔",
+            "BS3DQPBY": "3D千炮捕鱼",
+            "JDB_BY_DISCO": "捕鱼Disco",
+            "JDBWLBY": "五龙捕鱼",
+            "MTMGBY": "疯狂魔鬼城",
+            "BSDNTGBY": "大闹天宮",
+            "BSLKBY": "李逵劈鱼",
+            "JDB_BY_LLG": "猎龙高手",
+            "KYLKBY": "开元李逵捕鱼",
+            "KYHBBY": "开元红包捕鱼",
+            "BSBNDR": "捕鸟达人",
+            "SGYXBY": "异形猎人",
+            "BGBYDX": "大仙捕鱼",
+            "JDBTTBY": "天天捕鱼",
+            "DGJT": "淘金捕鱼",
+            "DG_BY_BSD": "波塞冬捕鱼",
+            "DG_BY_TTBY": "天天捕鱼DG",
+            "FGFYBY": "福运捕鱼",
+            "YGRHDBY": "海盗捕鱼",
+            "YGRBCDR": "捕虫达人",
+            "YGRZML": "祖玛龙",
+            "YGRZMRY": "祖玛荣耀",
+            "YGRQSBY": "轻松捕鱼",
+            "YGRLYFY": "龙爷放鱼",
+            "FGMRBY": "美人捕鱼",
+            "DG_BY_NNBY": "牛牛捕鱼",
+            "YGRHDQY": "海盗抢鱼",
+            "YGREYBY": "二爷捕鱼",
+            "DG_BY_CSBY": "财神捕鱼DG",
+            "DG_BY_JC": "金蟾捕鱼",
+            "KYJYBY": "开元金元捕鱼",
+            "KYBYCS": "开元捕鱼传说",
+            "CQ": "CQ9",
+            "FGDZ": "FG电子",
+            "JDB_DZ": "夺宝电子彩票",
+            "AGDZ": "AG电子",
+            "JDB_DZ_LHJ": "夺宝电子",
+            "MGWBDZ": "MG电子",
+            "MTDZ": "MT电子",
+            "SGDZ": "SG新霸电子",
+            "PGDZ": "PG电子",
+            "THDZ": "天豪电子",
+            "BBINDZ": "BBIN电子",
+            "JDBDZA": "夺宝电子",
+            "MGDZA": "MG电子",
+            "CQDZA": "传奇电子",
+            "MTDZA": "MT电子",
+            "PGDZA": "PG电子",
+            "YGRDZ": "YGR电子",
+            "BBINDZA": "BBIN电子",
+            "AG": "AG国际馆",
+            "BBIN": "BBIN视讯",
+            "BGZR": "BG视讯",
+            "DG": "DG视讯",
+            "EBET": "EBET视讯",
+            "OBG": "DB视讯",
+            "ASTAR": "ASTAR视讯",
+            "OB": "沙巴体育",
+            "IMSB": "IM体育",
+            "FBTY": "FB体育",
+            "KYTY": "开元体育",
+            "OBTY": "熊猫体育",
+            "CR": "皇冠体育",
+            "IMDJ": "IM电竞",
+            "MGG_CP": "MGG彩票",
+        }
+
+        # 请求URL
+        summary_url = 'http://kyqp99admin1.com:1788/adminsystem/server/summaryReport/findMultiplePlatformSummaryReport'
+        member_url = "http://kyqp99admin1.com:1788/adminsystem/server/summaryReport/findMemberSummaryReportPage"
+
+        # 准备请求数据
+        summary_data = {
+            'endDate': end_date,
+            'startDate': end_date,
+            'memberOrAgent': '2',
+            'platformCodeList': list(platform_code_mapping.keys())
+        }
+
+        # 发送 POST 请求获取平台汇总数据
+        response = requests.post(summary_url, json=summary_data, headers=headers)
+        results = []
+
+        if response.status_code == 200:
+            data = response.json().get('data', {})
+            bet_summary_report_list = data.get('betSummaryReportList', [])
+
+            for item in bet_summary_report_list:
+                summary_report_list = item.get('summaryReportList', [])
+                for summary_item in summary_report_list:
+                    游戏简称 = summary_item.get('platformCode')
+                    游戏名字 = summary_item.get('platformName')
+                    注单量 = summary_item.get('betCount')
+                    有效投注 = summary_item.get('betAmount')
+                    输赢 = summary_item.get('payAmount')
+
+                    # 获取会员人数
+                    member_data = {
+                        "startDate": end_date,
+                        "endDate": end_date,
+                        "memberOrAgent": 2,
+                        "pageVO": {"pageNo": "1", "pageSize": "20"},
+                        "platformCodeList": [游戏简称],
+                    }
+                    member_response = requests.post(member_url, json=member_data, headers=headers)
+                    if member_response.status_code == 200:
+                        人数 = member_response.json()['data']['totalRecord']
+                    else:
+                        人数 = 'N/A'
+
+                    if 游戏名字:
+                        results.append([游戏简称, 游戏名字, 人数, 注单量, 有效投注, 输赢])
+                    else:
+                        print("Platform Name 未找到")
+        else:
+            print("请求失败，状态码：", response.status_code)
+
+        # 写入CSV文件
+        with open('game_report.csv', 'w', newline='', encoding='utf-8') as csvfile:
+            csv_writer = csv.writer(csvfile)
+            csv_writer.writerow(['游戏简称', '游戏平台', "人数", '注单量', '有效投注', '平台盈亏'])
+            csv_writer.writerows(results)
+
+        # 将CSV文件转换为Excel并打开
+        df = pd.read_csv('game_report.csv')
+        df.to_excel('棋牌游戏报表.xlsx', index=False)
+
+        # 打开Excel文件
+        subprocess.Popen(['start', '棋牌游戏报表.xlsx'], shell=True)
+
+    except Exception as e:
+         messagebox.showerror("错误", str(e))
+
+# 创建主窗口
+root = tk.Tk()
+root.title("获取棋牌平台游戏报表")
+root.geometry("330x150")  # 设置窗口大小
+
+# 设置字体
+font_style = ("Helvetica", 12)
+font_styl = ("Helvetica", 15)
+# 创建标签和输入框
+
+label_password = tk.Label(root, text="请输入密码:", font=font_style,)
+label_password.grid(row=1, column=0, padx=10, pady=5, sticky='e')
+
+entry_password = tk.Entry(root,font=font_style)
+entry_password.grid(row=1, column=1, padx=10, pady=5)
+
+submit_button = tk.Button(root, text="提交查询", command=run_script, font=font_styl, fg='red')
+submit_button.grid(row=2, columnspan=2, pady=10)
+
+# 运行主循环
+root.mainloop()
