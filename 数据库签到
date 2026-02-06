@@ -1,0 +1,689 @@
+import sys
+from configparser import ConfigParser
+from datetime import datetime
+import os
+import time
+
+import requests
+from openpyxl import Workbook
+
+from PyQt5.QtCore import QStandardPaths, QObject, QThread, pyqtSignal, Qt, QByteArray
+from PyQt5.QtGui import QPixmap, QIcon, QTextCursor, QTextCharFormat
+from PyQt5.QtWidgets import (
+    QApplication, QWidget, QLineEdit, QPushButton, QMessageBox, QVBoxLayout,
+    QTextEdit, QFileDialog, QHBoxLayout, QLabel, QProgressBar, QInputDialog
+)
+
+
+# =============== 子线程工作器 ===============
+class SignWorker(QObject):
+    log = pyqtSignal(str)                 # 追加日志（用于“正在处理: xxx”）
+    log_replace = pyqtSignal(str)         # 替换上一行（把‘正在处理…’替换为最终结果）
+    progress = pyqtSignal(int, int)       # done, total
+    finished = pyqtSignal(str, str, dict) # summary, excel_path, stats
+    error = pyqtSignal(str)
+
+    def __init__(self, port, cookie, sspt, qdrq, cjuser_id, user_ids, sleep_seconds=2):
+        super().__init__()
+        self.port = port
+        self.cookie = cookie
+        self.sspt = sspt
+        self.qdrq = qdrq
+        self.cj_userid = cjuser_id
+        self.user_ids = user_ids
+        self.sleep_seconds = sleep_seconds
+        self._stop = False
+
+    def stop(self):
+        self._stop = True
+
+    def get_headers(self):
+        return {
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'zh-CN,zh;q=0.9',
+            'Authorization': self.cookie,
+            'Connection': 'keep-alive',
+            'Content-Type': 'application/json;charset=UTF-8',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+        }
+
+    def _map_message(self, msg: str) -> str:
+        """把后端返回的 message 规范化成更友好的中文提示"""
+        if not msg:
+            return "无返回信息"
+        m = msg.strip()
+        ml = m.lower()
+        if "one or more errors occurred" in ml:
+            return "签到日期格式错误"
+        return m
+
+    def run(self):
+        try:
+            results = []
+            empty_data_accounts = []
+            total = len(self.user_ids)
+
+            session = requests.Session()
+            session.verify = False
+            headers = self.get_headers()
+
+            url_list = f'http://{self.port}/api/followupcustomersrecordmodule/MemberMaintain/GetPageListAsync'
+            url_sign = f'http://{self.port}/api/followupcustomersrecordmodule/MemberMaintain/InsertSignsAsync'
+
+            for idx, user_id in enumerate(self.user_ids, 1):
+                if self._stop:
+                    self.log.emit(f"已停止，最后处理到：{user_id}")
+                    break
+
+                # 占位行（便于替换）
+                self.log.emit(f"正在处理: {user_id}")
+                self.progress.emit(idx - 1, total)
+
+                data_list = {
+                    'pageIndex': 1,
+                    'pageSize': 20,
+                    'data': {
+                        'isRecharge': 0,
+                        'isWithdraw': 0,
+                        'isBet': 0,
+                        'appId': user_id,
+                        'memberId': '',
+                        'createUserId': 0,
+                        'memberActiveStatus': 0,
+                        'platformCode': self.sspt,
+                        'channel': '',
+                        'memberType': 0,
+                        'times': [],
+                        'updateTimes': [],
+                    },
+                }
+
+                time.sleep(self.sleep_seconds)
+
+                try:
+                    resp = requests.post(url_list, headers=headers, json=data_list, timeout=15)
+                    if resp.status_code != 200:
+                        msg = f"正在处理: {user_id}   查询失败，HTTP {resp.status_code}"
+                        results.append({'用户账号': user_id, '会员ID': '', '签到结果': f'查询失败，HTTP {resp.status号码}'})
+                        self.log_replace.emit(msg)
+                        self.progress.emit(idx, total)
+                        continue
+
+                    try:
+                        response_data = resp.json().get('data', [])
+                    except Exception:
+                        response_data = []
+                        self.log_replace.emit(f"正在处理: {user_id}   返回非JSON或结构异常")
+
+                    if not response_data:
+                        results.append({'用户账号': user_id, '会员ID': '', '签到结果': '暂无数据'})
+                        empty_data_accounts.append(user_id)
+                        self.log_replace.emit(f"正在处理: {user_id}   暂无数据")
+                        self.progress.emit(idx, total)
+                        continue
+
+                    for aa in response_data:
+                        member_id = str(aa.get('memberId', ''))
+                        data_sign = {
+                            'memberId': member_id,
+                            'signDateTime': self.qdrq,
+                            'replenishSign': False,
+                            'createUserId': self.cj_userid,
+                            'updateUserId': self.cj_userid,
+                        }
+
+                        resp2 = requests.post(url_sign, headers=headers, json=data_sign, timeout=15)
+                        try:
+                            response_data2 = resp2.json()
+                            raw_message = response_data2.get('message', '无返回信息')
+                        except Exception:
+                            raw_message = "返回数据无法解析为JSON"
+
+                        message = self._map_message(raw_message)
+
+                        results.append({'用户账号': user_id, '会员ID': member_id, '签到结果': message})
+                        self.log_replace.emit(f"正在处理: {user_id}   {message}")
+
+                except requests.RequestException as re:
+                    msg = f"正在处理: {user_id}   网络异常 - {str(re)}"
+                    results.append({'用户账号': user_id, '会员ID': '', '签到结果': f'处理失败: {str(re)}'})
+                    self.log_replace.emit(msg)
+                except Exception as e:
+                    msg = f"正在处理: {user_id}   处理失败 - {str(e)}"
+                    results.append({'用户账号': user_id, '会员ID': '', '签到结果': f'处理失败: {str(e)}'})
+                    self.log_replace.emit(msg)
+
+                self.progress.emit(idx, total)
+
+            # 汇总并写 Excel
+            excel_path = ""
+            if results:
+                timestamp = datetime.now().strftime("%Y年%m月%d日%H时%M分%S秒")
+                excel_path = os.path.join(os.getcwd(), f"签到日志_{timestamp}.xlsx")
+                wb = Workbook()
+
+                # 明细
+                ws1 = wb.active
+                ws1.title = '签到详情'
+                ws1.append(['用户账号', '会员ID', '签到结果'])
+                for item in results:
+                    ws1.append([item['用户账号'], item['会员ID'], item['签到结果']])
+
+                # 统计
+                def _is_failed_text(text: str) -> bool:
+                    if not text:
+                        return False
+                    t = text.strip()
+                    tl = t.lower()
+                    return (
+                        ("失败" in t) or ("错误" in t) or ("异常" in t) or ("拒绝" in t) or ("超时" in t)
+                        or ("error" in tl) or ("failed" in tl) or ("exception" in tl) or ("denied" in tl)
+                        or ("forbidden" in tl) or ("timeout" in tl) or ("invalid" in tl) or ("not found" in tl)
+                    )
+
+                total_accounts = len(results)
+                failed_accounts = sum(1 for i in results if _is_failed_text(i['签到结果']))
+                no_data_accounts = sum(1 for i in results if "暂无数据" in i['签到结果'])
+                success_accounts = total_accounts - no_data_accounts - failed_accounts
+
+                ws2 = wb.create_sheet(title='统计信息')
+                ws2.append(['总处理账号', '成功处理', '无数据账号', '失败账号'])
+                ws2.append([total_accounts, success_accounts, no_data_accounts, failed_accounts])
+
+                wb.save(excel_path)
+
+                summary = "所有账号已处理完成！\n"
+                stats = {
+                    "total": total_accounts,
+                    "success": success_accounts,
+                    "no_data": no_data_accounts,
+                    "failed": failed_accounts
+                }
+                self.finished.emit(summary, excel_path, stats)
+            else:
+                self.finished.emit("没有任何结果需要保存。", "", {"total": 0, "success": 0, "no_data": 0, "failed": 0})
+
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class LoginWindow(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.thread = None
+        self.worker = None
+        self.user_ids = []
+        self.initUI()
+
+        # 到期提醒
+        self.expiration_date_str = "2026-09-19 23:59:59"
+        self.expiration_date = datetime.strptime(self.expiration_date_str, "%Y-%m-%d %H:%M:%S")
+
+        remaining_days = self.get_remaining_days()
+        if 0 < remaining_days <= 7:
+            QMessageBox.warning(self, "软件即将更新", f"本软件将在{remaining_days}天后自动更新：\n请联系《富贵》获取最新版本。")
+
+        if self.is_expired():
+            QMessageBox.critical(self, "软件已更新", "你的应用版本过低：\n请联系《富贵》获取最新版本。")
+            sys.exit(0)
+
+    def is_expired(self):
+        return datetime.now() > self.expiration_date
+
+    def get_remaining_days(self):
+        return (self.expiration_date - datetime.now()).days
+
+    def initUI(self):
+        self.setWindowTitle('数据库签到')
+        self.resize(800, 600)
+
+        # 加载 base64 图标（确保字符串完整）
+        icon_base64 = "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//8iV///Ilf//yJX//8iV///Ilf//yJW//IiV/+HGFX/FQAAAAAAAAAAAAAAACFV/ychV//OIlf/5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIVj/PSFW/88iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV//2Ilf/ryJX/5AiV/+1Ilf/+iJX//8iV//aAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJEn/ByFW/5IiVv/+Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX/6UAAAAAAAAAAAAAAAAAAAAAAAAAACBV/xghVv/JIlf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf/TAAAAAAAAAAAAAAAAAAAAAAhWv8fIVf/3SJX//8iV///Ilf//yJX/+giVv+9IVf/oSJX/5YiV/+cIlb/tCJX/98iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yFX/84AAP8BAAAAAAAAAAAAAAAAIVn/FyJX/9wiV///Ilb/ySJV/28jVf8kAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACFS/x8hV/91Ilf/4CJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8hV//8IFf/OAAAAAAAAAAAAAAAACpV/wYiV//FIlf/rSJY/zQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACpV/wYgVv+OIlf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJW/4gAAAAAAAAAAAAAAAAAAAAAIVf/VSBT/zcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAhWf8XIlf/xSJX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AAAAAAAAIlb/dyJX//8hVv/PG1H/EwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIGD/CABV/wMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABxV/wkhV//lIVf/wh5a/xEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIVj/eiJX/5wkSf8HAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACFZ/xciVv9TAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKAAAADAAAABgAAAAAQAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/AUBA/wQqVf8GJEn/BzNm/wUAAP8BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/wEgUP8QHlX/MyJW/1MhWP9rIlf/fiNW/4whV/+SIVb/lCJX/40iVv9/I1f/ZiJW/0QgVf8YAAD/AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACFT/y4hWf8XAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAaTf8KIlf/TCFY/6AjV//VIVf/5SJX//AiV//4Ilf//iJX//8iV///Ilf//yJX//8iVv/+Ilf/9yJX/+siV//YIlf/liNX/ywAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJFv/KiJX/9AjV/9JAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAcVf8JHVf/IyFW/3whV//fIlf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJW//ghVv+gIVf/Lxdd/wsAAAAAAAAAAAAAAAAAAAAAAAAAACpV/wYkWP9AIVj/3SJX//UhWP9jAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACNU/zoiVv+UIlf/5CJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf/6iJX/54gWP9XIlP/JSBg/xAcVf8bI1X/QiFX/4oiV//iIlf//yJX//YhVv9lAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAbXv8TIlf/kCJX/+giV//8Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//4iV//xIlf/4SJX/9ohV//dIlf/6iJX//wiV///Ilf//yJX//EhV/9VAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQED/BCBY/zciV//IIlf//iJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yNX/+UkV/8yAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgUP8QIVb/cyJX/+ciV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJW/8MaTf8KAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACdi/w0iV/+VIlf/9iJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX/2EAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHFX/EiNW/6EiV///Ilf//yJX//8iV///Ilf//yJX//oiV//vIlf/5yJX/+EhV//dIlf/3CNX/90iV//hIlf/6CJX//EiV//8Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf/0kBA/wQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAjWP8dIVf/qCJX//8iV///Ilf//yJX//YhV//HIVf/mSJY/3EfWP9RIFj/NyJT/yUdWP8aIVn/FydY/xoiV/8mI1j/OiNY/1chVv98Ilf/qiJX/+EiV//+Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iVv/vIlf/TAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACdO/w0hWP+aIlf/+yJX//8iV//nIVb/iyRX/zIgVf8YHFX/CQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgP8CJFv/DiJa/yUhVv9zIlf/6CJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//0iV/+YGmb/CgAAAAAAAAAAAAAAAAAAAAAAAAAAAFX/AyFW/3MiV//zIlf/2SBW/3YaWf8UAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/wEcVf8SIlf/gSJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX/9giU/8lAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIFf/WCJW/8MgV/9vHVj/GgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACJb/y0iV/+tIlf/+SJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX/74AQP8EAAAAAAAAAAAAAAAAAAAAAAAAAAAgWP8gIlb/WR1Y/xoAVf8DAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIFT/QCFX/94iV//9Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX/+AiWv8lAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP8BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEBA/wQiVv9TIlj/6yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yFX/+0iVv9KAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACJX/2EiV//iIlf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//YhWP9jAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP8BI1f/bCJX//EiV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//shVv90AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEBA/wQhWP9jIlf/8SJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//0hV/97AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA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AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACFX/1UiVv/PIFn/PwBA/wQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHFX/EiJX/58hVf8nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIlP/JSJV/w8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="  # 替换成你的 base64
+        icon_data = QByteArray.fromBase64(icon_base64.encode())
+
+        # 更可靠的图标加载方式
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(icon_data, "ICO"):  # 显式指定格式
+            print("❌ 图标加载失败！请检查 base64 数据或文件格式")
+        else:
+            self.setWindowIcon(QIcon(pixmap))  # 设置窗口和任务栏图标
+
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(20, 20, 20, 20)
+
+        # ===== 日志显示区 =====
+        self.result_text = QTextEdit()
+        self.result_text.setReadOnly(True)
+        self.result_text.setPlaceholderText("👉 签到成功或失败结果将显示在这里...")
+        self.result_text.setStyleSheet("""
+            QTextEdit {
+                border: 1px solid #cccccc;
+                padding: 10px;
+                font-size: 14px;
+                background-color: #fafafa;
+            }
+        """)
+        self.result_text.setFixedHeight(220)
+        main_layout.addWidget(self.result_text)
+
+        # ===== 紧贴日志下方：进度条（显示 done/total） =====
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMinimum(0)
+        self.progress_bar.setMaximum(1)          # 初始占位
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFormat("0/0")       # 显示 已完成/总数
+        self.progress_bar.setAlignment(Qt.AlignCenter)
+        self.progress_bar.setStyleSheet("QProgressBar { text-align: center; }")
+        main_layout.addWidget(self.progress_bar)
+
+        # ===== 中间：表单 + 按钮 =====
+        middle_layout = QHBoxLayout()
+        form_layout = QVBoxLayout()
+
+        # port
+        port_layout = QHBoxLayout()
+        port_label = QLabel('🌐 端口地址：')
+        self.srk_port = QLineEdit()
+        self.srk_port.setPlaceholderText('请输入端口地址，例如 172.16.101.18:31513')
+        self.srk_port.setFixedHeight(36)
+        port_layout.addWidget(port_label)
+        port_layout.addWidget(self.srk_port)
+        form_layout.addLayout(port_layout)
+
+        # Cookie
+        cookie_layout = QHBoxLayout()
+        cookie_label = QLabel('🔑 Cookie：')
+        self.srk_token = QLineEdit()
+        self.srk_token.setPlaceholderText('请输入完整Cookie')
+        self.srk_token.setFixedHeight(36)
+        cookie_layout.addWidget(cookie_label)
+        cookie_layout.addWidget(self.srk_token)
+        form_layout.addLayout(cookie_layout)
+
+        # 所属平台
+        pt_layout = QHBoxLayout()
+        pt_label = QLabel('📱 所属平台：')
+        self.pt_input = QLineEdit()
+        self.pt_input.setPlaceholderText('请输入所属平台，例如 a02')
+        self.pt_input.setFixedHeight(36)
+        pt_layout.addWidget(pt_label)
+        pt_layout.addWidget(self.pt_input)
+        form_layout.addLayout(pt_layout)
+
+        # 签到日期
+        qd_layout = QHBoxLayout()
+        qd_label = QLabel('📅 签到日期：')
+        self.qd_time_input = QLineEdit()
+        self.qd_time_input.setPlaceholderText('请输入签到日期，例如 2025-07-06')
+        self.qd_time_input.setFixedHeight(36)
+        qd_layout.addWidget(qd_label)
+        qd_layout.addWidget(self.qd_time_input)
+        form_layout.addLayout(qd_layout)
+
+        # updateUserId
+        user_layout = QHBoxLayout()
+        user_label = QLabel('👤 updateUserId：')
+        self.cj_userid_input = QLineEdit()
+        self.cj_userid_input.setPlaceholderText('请输入updateUserId，例如：1920042')
+        self.cj_userid_input.setFixedHeight(36)
+        user_layout.addWidget(user_label)
+        user_layout.addWidget(self.cj_userid_input)
+        form_layout.addLayout(user_layout)
+
+        self.save_button = QPushButton("💾 保存配置")
+        self.save_button.setFixedHeight(40)
+        self.save_button.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border-radius: 5px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+        """)
+        self.save_button.clicked.connect(self.manual_save)
+        form_layout.addWidget(self.save_button)
+
+        middle_layout.addLayout(form_layout, 3)
+
+        # 右侧按钮
+        button_layout = QVBoxLayout()
+
+        self.file_button = QPushButton('📁 选择文件')
+        self.file_button.setFixedHeight(40)
+        self.file_button.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                border-radius: 5px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+        """)
+        self.file_button.clicked.connect(self.select_file)
+        button_layout.addWidget(self.file_button)
+
+        button_layout.addSpacing(20)
+
+        self.submit_button = QPushButton('🚀 开始签到')
+        self.submit_button.setFixedHeight(50)
+        self.submit_button.setStyleSheet("""
+            QPushButton {
+                background-color: #FF9800;
+                color: white;
+                border-radius: 5px;
+                font-weight: bold;
+                font-size: 16px;
+            }
+            QPushButton:hover {
+                background-color: #F57C00;
+            }
+        """)
+        self.submit_button.clicked.connect(self.start_sign_thread)
+        button_layout.addWidget(self.submit_button)
+
+        self.stop_button = QPushButton('🛑 停止')
+        self.stop_button.setFixedHeight(40)
+        self.stop_button.setEnabled(False)
+        self.stop_button.setStyleSheet("""
+            QPushButton {
+                background-color: #E53935;
+                color: white;
+                border-radius: 5px;
+                font-weight: bold;
+            }
+            QPushButton:disabled {
+                background-color: #ef9a9a;
+            }
+        """)
+        self.stop_button.clicked.connect(self.stop_sign_thread)
+        button_layout.addWidget(self.stop_button)
+
+        button_layout.addStretch()
+        middle_layout.addLayout(button_layout, 1)
+
+        main_layout.addLayout(middle_layout)
+
+        self.setLayout(main_layout)
+        self.load_config()
+
+    # ========= 配置读写 =========
+    def save_config(self, port, token, sspt, qdrq, cjuser_id):
+        config = ConfigParser()
+        config['USER'] = {'Port': port, 'Token': token, 'sspt': sspt,  'qdrq': qdrq, 'cjuser_id': cjuser_id}
+        with open('config.ini', 'w') as f:
+            config.write(f)
+
+    def load_config(self):
+        config = ConfigParser()
+        config.read('config.ini')
+        if 'USER' in config:
+            self.srk_port.setText(config['USER'].get('Port', ''))
+            self.srk_token.setText(config['USER'].get('Token', ''))
+            self.pt_input.setText(config['USER'].get('sspt', ''))
+            self.qd_time_input.setText(config['USER'].get('qdrq', ''))
+            self.cj_userid_input.setText(config['USER'].get('cjuser_id', ''))
+
+    def select_file(self):
+        desktop_path = QStandardPaths.writableLocation(QStandardPaths.DesktopLocation)
+        file_name, _ = QFileDialog.getOpenFileName(self, "选择用户ID文件", desktop_path, "Text Files (*.txt);;All Files (*)")
+        if file_name:
+            self.user_ids = []
+            try:
+                with open(file_name, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            self.user_ids.append(line)
+                QMessageBox.information(self, "成功", f"成功导入 {len(self.user_ids)} 个账号！")
+
+                total = len(self.user_ids)
+                self.progress_bar.setMaximum(total if total > 0 else 1)
+                self.progress_bar.setValue(0)
+                self.progress_bar.setFormat(f"0/{total}")
+
+            except UnicodeDecodeError:
+                QMessageBox.warning(self, "错误", "文件编码错误，请确保文件使用UTF-8编码！")
+
+    # =============== 开始子线程 ===============
+    def start_sign_thread(self):
+        try:
+            if self.thread and self.thread.isRunning():
+                QMessageBox.information(self, "提示", "任务正在进行中，请先停止或等待完成。")
+                return
+
+            port = self.srk_port.text().strip()
+            cookie = self.srk_token.text().strip()
+            sspt = self.pt_input.text().strip()
+            qdrq = self.qd_time_input.text().strip()
+            cjuser_id = self.cj_userid_input.text().strip()
+
+            if not (port and cookie and qdrq and cjuser_id):
+                QMessageBox.warning(self, "输入错误", "请填写所有字段！")
+                return
+
+            if not getattr(self, "user_ids", None):
+                QMessageBox.warning(self, "错误", "请先选择包含用户ID的文件！")
+                return
+
+            total = len(self.user_ids)
+            if total <= 0:
+                QMessageBox.warning(self, "错误", "用户ID列表为空！")
+                return
+
+            # 清空日志并禁用按钮
+            self.result_text.clear()
+            self.submit_button.setEnabled(False)
+            self.file_button.setEnabled(False)
+            self.save_button.setEnabled(False)
+            self.stop_button.setEnabled(True)
+
+            # 初始化进度条
+            self.progress_bar.setMaximum(total if total > 0 else 1)
+            self.progress_bar.setValue(0)
+            self.progress_bar.setFormat(f"0/{total}")
+
+            # 线程与工作器
+            self.thread = QThread()
+            self.worker = SignWorker(port, cookie, sspt, qdrq, cjuser_id, self.user_ids, sleep_seconds=2)
+            self.worker.moveToThread(self.thread)
+
+            # 信号
+            self.thread.started.connect(self.worker.run)
+            self.worker.log.connect(self.on_worker_log)
+            self.worker.log_replace.connect(self.on_worker_log_replace)
+            self.worker.progress.connect(self.on_worker_progress)
+            self.worker.finished.connect(self.on_worker_finished)
+            self.worker.error.connect(self.on_worker_error)
+
+            self.thread.finished.connect(self.thread.deleteLater)
+            self.thread.start()
+
+        except Exception as e:
+            self.submit_button.setEnabled(True)
+            self.file_button.setEnabled(True)
+            self.save_button.setEnabled(True)
+            self.stop_button.setEnabled(False)
+            QMessageBox.critical(self, "错误", str(e))
+            self.result_text.append(f"发生全局错误: {str(e)}")
+
+    # =============== 停止子线程（温和停止） ===============
+    def stop_sign_thread(self):
+        if self.worker:
+            self.worker.stop()
+            self.stop_button.setEnabled(False)
+            self.result_text.append("正在尝试停止任务（本轮循环结束后生效）...")
+
+    # =============== 子线程回调（含彩色日志） ===============
+    def on_worker_log(self, text: str):
+        from html import escape
+        cursor = self.result_text.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        cursor.insertHtml(f'<span style="color:#666;">{escape(text)}</span>')
+        cursor.insertBlock()
+        cursor.setCharFormat(QTextCharFormat())
+        self.result_text.setTextCursor(cursor)
+        self.result_text.ensureCursorVisible()
+
+    def on_worker_log_replace(self, text: str):
+        import re
+        user_id, message = "", text.strip()
+        m = re.match(r'^正在处理:\s*(\S+)\s+(.*)$', message)
+        if m:
+            user_id, message = m.group(1), m.group(2)
+
+        html_line = self._colored_html_line(user_id, message)
+
+        cursor = self.result_text.textCursor()
+        cursor.movePosition(QTextCursor.End)            # 当前在空段落
+        cursor.movePosition(QTextCursor.PreviousBlock)  # 回到占位行
+        if not cursor.block().isValid():
+            cursor.movePosition(QTextCursor.End)
+            cursor.insertHtml(html_line)
+            cursor.insertBlock()
+            cursor.setCharFormat(QTextCharFormat())
+            self.result_text.setTextCursor(cursor)
+            self.result_text.ensureCursorVisible()
+            return
+
+        cursor.select(QTextCursor.BlockUnderCursor)
+        cursor.removeSelectedText()
+        cursor.insertHtml(html_line)
+        cursor.insertBlock()
+        cursor.setCharFormat(QTextCharFormat())
+        self.result_text.setTextCursor(cursor)
+        self.result_text.ensureCursorVisible()
+
+    def on_worker_progress(self, done: int, total: int):
+        self.progress_bar.setMaximum(total if total > 0 else 1)
+        self.progress_bar.setValue(done if total > 0 else 0)
+        self.progress_bar.setFormat(f"{done}/{total}")
+
+    def on_worker_finished(self, summary: str, excel_path: str, stats: dict):
+        # 恢复按钮
+        self.submit_button.setEnabled(True)
+        self.file_button.setEnabled(True)
+        self.save_button.setEnabled(True)
+        self.stop_button.setEnabled(False)
+
+        # 进度置为 N/N
+        total = int(stats.get("total", len(self.user_ids))) if stats else len(self.user_ids)
+        if total <= 0:
+            self.progress_bar.setMaximum(1)
+            self.progress_bar.setValue(0)
+            self.progress_bar.setFormat("0/0")
+        else:
+            self.progress_bar.setMaximum(total)
+            self.progress_bar.setValue(total)
+            self.progress_bar.setFormat(f"{total}/{total}")
+
+        # 中性颜色输出总结
+        from html import escape
+        cursor = self.result_text.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        safe_summary_html = escape(summary).replace('\n', '<br>')
+        cursor.insertHtml('<span style="color:#333;">' + safe_summary_html + '</span>')
+        cursor.insertBlock()
+        cursor.setCharFormat(QTextCharFormat())
+
+        if excel_path:
+            cursor.insertHtml('<span style="color:#333;">签到日志已生成</span>')
+            cursor.insertBlock()
+            cursor.setCharFormat(QTextCharFormat())
+
+        self.result_text.setTextCursor(cursor)
+        self.result_text.ensureCursorVisible()
+
+        if not excel_path:
+            QMessageBox.information(self, "完成", summary)
+
+        if self.thread and self.thread.isRunning():
+            self.thread.quit()
+            self.thread.wait()
+        self.worker = None
+        self.thread = None
+
+    def on_worker_error(self, err: str):
+        self.submit_button.setEnabled(True)
+        self.file_button.setEnabled(True)
+        self.save_button.setEnabled(True)
+        self.stop_button.setEnabled(False)
+
+        self.result_text.append(f"发生全局错误: {err}")
+        QMessageBox.critical(self, "错误", err)
+
+        if self.thread and self.thread.isRunning():
+            self.thread.quit()
+            self.thread.wait()
+        self.worker = None
+        self.thread = None
+
+    # ===== 日志着色工具 =====
+    def _classify_status(self, msg: str) -> str:
+        if not msg:
+            return "neutral"
+        t = msg.strip()
+        tl = t.lower()
+        if ("暂无数据" in t) or ("no data" in tl):
+            return "nodata"
+        if any(k in tl for k in [
+            "失败", "错误", "异常", "拒绝", "超时",
+            "error", "failed", "exception", "denied", "forbidden", "timeout", "invalid", "not found"
+        ]):
+            return "fail"
+        if any(k in tl for k in ["成功", "ok", "已签到", "already", "success"]):
+            return "success"
+        return "neutral"
+
+    def _colored_html_line(self, user_id: str, message: str) -> str:
+        from html import escape
+        status = self._classify_status(message)
+        color = {"success": "#2e7d32", "fail": "#d32f2f", "nodata": "#fb8c00", "neutral": "#333"}.get(status, "#333")
+        return f'正在处理: {escape(str(user_id))} &nbsp;&nbsp;<span style="color:{color};">{escape(message)}</span>'
+
+    # ===== 保存配置 =====
+    def manual_save(self):
+        port = self.srk_port.text().strip()
+        token = self.srk_token.text().strip()
+        sspt = self.pt_input.text().strip()
+        qdrq = self.qd_time_input.text().strip()
+        cjuser_id = self.cj_userid_input.text().strip()
+
+        if not (port and token and sspt and qdrq and cjuser_id):
+            QMessageBox.warning(self, "输入错误", "请填写所有字段！")
+            return
+
+        self.save_config(port, token, sspt, qdrq, cjuser_id)
+        QMessageBox.information(self, "提示", "✅ 配置已保存！")
+
+
+if __name__ == '__main__':
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    app = QApplication(sys.argv)
+
+    # ===== 启动密码校验 =====
+    CORRECT_PWD = "wh112233"
+    verified = False
+    for _ in range(3):
+        pwd, ok = QInputDialog.getText(None, "验证密码", "请输入启动密码：", QLineEdit.Password)
+        if not ok:
+            break
+        if pwd == CORRECT_PWD:
+            verified = True
+            break
+        else:
+            QMessageBox.warning(None, "错误", "密码不正确！")
+    if not verified:
+        QMessageBox.critical(None, "拒绝访问", "验证失败或已取消，程序已退出。")
+        sys.exit(0)
+
+    login_window = LoginWindow()
+    login_window.show()
+    sys.exit(app.exec_())
