@@ -1,0 +1,488 @@
+import sys
+import re
+import json
+from pathlib import Path
+from datetime import datetime
+import requests
+from PyQt5.QtGui import QPixmap, QIcon
+from PyQt5.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+    QPushButton, QGroupBox, QFormLayout, QMessageBox, QInputDialog
+)
+from PyQt5.QtCore import Qt, QByteArray
+from aliyunsdkcore.client import AcsClient
+from aliyunsdkcore.request import CommonRequest
+
+# ===== 写死：Region / 实例ID / 端口 / 模板名基础 =====
+REGION = "cn-hongkong"                 # 改成你的 RegionId（如 cn-hangzhou 等）
+INSTANCE_ID = "221ae6db250f49b2ac5610583471c43e"          # ←← 必改：你的 SWAS 实例 ID
+PORT_FIXED = "8000"                    # 单端口；不要使用 8000/8000
+TEMPLATE_NAME_BASE = "swas-tcp8000-whitelist"
+# 程序所在目录（脚本运行=py文件目录；打包EXE=exe所在目录）
+APP_DIR = Path(sys.argv[0]).resolve().parent
+CONFIG_PATH = APP_DIR / "swas_template.ini"   # 方案B（模板版）
+
+IPV4_RE = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
+
+
+# ---------------- 配置读写（保存 AK/SK 和当前模板名） ----------------
+def read_cfg():
+    if not CONFIG_PATH.exists():
+        return {"ak": "", "sk": "", "ACTIVE_TEMPLATE_NAME": TEMPLATE_NAME_BASE}
+    from configparser import ConfigParser
+    cp = ConfigParser(); cp.read(CONFIG_PATH, encoding="utf-8")
+    return {
+        "ak": cp.get("SWAS", "ak", fallback=""),
+        "sk": cp.get("SWAS", "sk", fallback=""),
+        "ACTIVE_TEMPLATE_NAME": cp.get("SWAS", "ACTIVE_TEMPLATE_NAME", fallback=TEMPLATE_NAME_BASE),
+    }
+
+def write_cfg(d):
+    from configparser import ConfigParser
+    cp = ConfigParser()
+    cp["SWAS"] = {
+        "ak": d.get("ak", ""),
+        "sk": d.get("sk", ""),
+        "ACTIVE_TEMPLATE_NAME": d.get("ACTIVE_TEMPLATE_NAME", TEMPLATE_NAME_BASE),
+    }
+    with CONFIG_PATH.open("w", encoding="utf-8") as f:
+        cp.write(f)
+
+# ---------------- 基础调用封装 ----------------
+def mk_client(ak, sk):
+    if not (ak and sk):
+        raise ValueError("请填写 AccessKey ID / Secret")
+    if "替换成你的实例ID" in INSTANCE_ID:
+        raise ValueError("请先在源码中把 INSTANCE_ID 改成你的实例ID！")
+    return AcsClient(ak, sk, REGION)
+
+def _do(client: AcsClient, action: str, params: dict):
+    """SWAS 区域端点：swas.<RegionId>.aliyuncs.com"""
+    req = CommonRequest()
+    req.set_domain(f"swas.{REGION}.aliyuncs.com")
+    req.set_version("2020-06-01")
+    req.set_method("POST")
+    req.set_protocol_type("https")
+    req.set_action_name(action)
+    for k, v in params.items():
+        req.add_query_param(k, v)
+    return client.do_action_with_exception(req)
+
+# ---------------- 模板相关 API ----------------
+def ensure_template(client: AcsClient, name: str) -> str:
+    """按名称找到或创建模板，返回模板ID"""
+    resp = _do(client, "DescribeFirewallTemplates", {
+        "RegionId": REGION,
+        "Name": name,
+        "PageNumber": 1,
+        "PageSize": 50,
+    })
+    data = json.loads(resp if isinstance(resp, str) else resp.decode("utf-8"))
+    for t in data.get("FirewallTemplates", []) or []:
+        if t.get("Name") == name:
+            return t.get("FirewallTemplateId")
+    resp = _do(client, "CreateFirewallTemplate", {
+        "RegionId": REGION,
+        "Name": name,
+        "Description": "GUI：TCP 8000 /32 白名单",
+    })
+    data = json.loads(resp if isinstance(resp, str) else resp.decode("utf-8"))
+    return data.get("FirewallTemplateId")
+
+def list_template_rules(client: AcsClient, tpl_id: str):
+    resp = _do(client, "DescribeFirewallTemplates", {
+        "RegionId": REGION,
+        "FirewallTemplateId": tpl_id,
+        "PageNumber": 1,
+        "PageSize": 200,
+    })
+    data = json.loads(resp if isinstance(resp, str) else resp.decode("utf-8"))
+    items = data.get("FirewallTemplates") or []
+    if not items:
+        return []
+    return items[0].get("FirewallTemplateRules") or []
+
+def add_rule_to_template(client: AcsClient, tpl_id: str, cidr: str, remark: str = "") -> str:
+    payload = {
+        "RegionId": REGION,
+        "FirewallTemplateId": tpl_id,
+        "FirewallRule.1.RuleProtocol": "TCP",
+        "FirewallRule.1.Port": PORT_FIXED,
+        "FirewallRule.1.SourceCidrIp": cidr,
+    }
+    if remark:
+        payload["FirewallRule.1.Remark"] = remark
+    resp = _do(client, "CreateFirewallTemplateRules", payload)
+    data = json.loads(resp if isinstance(resp, str) else resp.decode("utf-8"))
+    rules = data.get("FirewallTemplateRules") or []
+    return rules and rules[0].get("FirewallTemplateRuleId")
+
+def apply_template_to_instance(client: AcsClient, tpl_id: str):
+    _do(client, "ApplyFirewallTemplate", {
+        "RegionId": REGION,
+        "FirewallTemplateId": tpl_id,
+        "InstanceIds.1": INSTANCE_ID,
+    })
+
+# ---------------- 实例级清理（因部分区 Apply 非覆盖） ----------------
+def list_instance_rules(client: AcsClient):
+    req = CommonRequest()
+    req.set_domain(f"swas.{REGION}.aliyuncs.com")
+    req.set_version("2020-06-01")
+    req.set_method("POST")
+    req.set_protocol_type("https")
+    req.set_action_name("ListFirewallRules")
+    req.add_query_param("RegionId", REGION)
+    req.add_query_param("InstanceId", INSTANCE_ID)
+    return client.do_action_with_exception(req)
+
+def delete_instance_rules_by_match(client: AcsClient, cidr: str):
+    """删除实例上满足 TCP + 端口(PORT_FIXED) + 来源=cidr 的规则（兼容 RuleId / FirewallId 参数名）。"""
+    resp = list_instance_rules(client)
+    data = json.loads(resp if isinstance(resp, str) else resp.decode('utf-8'))
+    rules = data.get('FirewallRules', []) or []
+    deleted = []
+    for r in rules:
+        if (str(r.get('RuleProtocol')) == 'TCP' and
+            str(r.get('Port')) == PORT_FIXED and
+            str(r.get('SourceCidrIp')) == cidr):
+            rid = r.get('RuleId') or r.get('FirewallId')
+            if not rid:
+                continue
+            def _try_delete(param_name: str):
+                req = CommonRequest()
+                req.set_domain(f"swas.{REGION}.aliyuncs.com")
+                req.set_version("2020-06-01")
+                req.set_method("POST")
+                req.set_protocol_type("https")
+                req.set_action_name("DeleteFirewallRule")
+                req.add_query_param("RegionId", REGION)
+                req.add_query_param("InstanceId", INSTANCE_ID)
+                req.add_query_param(param_name, rid)
+                client.do_action_with_exception(req)
+            try:
+                _try_delete("RuleId")
+                deleted.append(f"RuleId:{rid}")
+            except Exception as e1:
+                if "MissingRuleId" in str(e1) or "InvalidParameter.RuleId" in str(e1):
+                    _try_delete("FirewallId")
+                    deleted.append(f"FirewallId:{rid}")
+                else:
+                    raise
+    return deleted
+
+# ---------------- 删除规则：先删模板 → 兜底新模板 → 清理实例 ----------------
+def delete_rule_from_template(client: AcsClient, tpl_id: str, rule_id: str, template_name: str):
+    """正常删失败则重建新模板（排除该规则）并应用；返回 (tpl_id, template_name) 或 (new_tpl_id, new_name)。"""
+    tries = [
+        {"FirewallTemplateRuleIds.1": rule_id},
+        {"FirewallTemplateRuleId":  rule_id},
+        {"FirewallTemplateRuleIds":  rule_id},
+    ]
+    for extra in tries:
+        payload = {"RegionId": REGION, "FirewallTemplateId": tpl_id}
+        payload.update(extra)
+        try:
+            _do(client, "DeleteFirewallTemplateRules", payload)
+            return tpl_id, template_name
+        except Exception as e:
+            msg = str(e)
+            if any(key in msg for key in ("MissingFirewallTemplateRuleId", "MissingParameter", "InvalidParameter")):
+                continue
+            raise
+
+    # 兜底：重建模板（不删旧模板）
+    rules = list_template_rules(client, tpl_id)
+    remaining = [r for r in rules if r.get("FirewallTemplateRuleId") != rule_id]
+
+    new_name = f"{TEMPLATE_NAME_BASE}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    resp = _do(client, "CreateFirewallTemplate", {
+        "RegionId": REGION, "Name": new_name, "Description": f"Rebuild from {template_name}"
+    })
+    data = json.loads(resp if isinstance(resp, str) else resp.decode("utf-8"))
+    new_tpl_id = data.get("FirewallTemplateId")
+
+    if remaining:
+        payload = {"RegionId": REGION, "FirewallTemplateId": new_tpl_id}
+        idx = 1
+        for r in remaining:
+            payload[f"FirewallRule.{idx}.RuleProtocol"] = str(r.get("RuleProtocol") or "TCP")
+            payload[f"FirewallRule.{idx}.Port"]         = str(r.get("Port") or PORT_FIXED)
+            payload[f"FirewallRule.{idx}.SourceCidrIp"] = str(r.get("SourceCidrIp") or "0.0.0.0/0")
+            if r.get("Remark"):
+                payload[f"FirewallRule.{idx}.Remark"] = r.get("Remark")
+            idx += 1
+        _do(client, "CreateFirewallTemplateRules", payload)
+
+    apply_template_to_instance(client, new_tpl_id)
+    return new_tpl_id, new_name
+
+# ---------------- GUI ----------------
+class App(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.cfg = read_cfg()
+        self.template_name = self.cfg.get("ACTIVE_TEMPLATE_NAME") or TEMPLATE_NAME_BASE
+        self._build_ui()
+
+    def _build_ui(self):
+        self.setWindowTitle("IP白名单")
+        self.setMinimumSize(560, 300)
+        self.resize(620, 320)
+        # 加载 base64 图标（确保字符串完整）
+        icon_base64 = "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//8iV///Ilf//yJX//8iV///Ilf//yJW//IiV/+HGFX/FQAAAAAAAAAAAAAAACFV/ychV//OIlf/5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIVj/PSFW/88iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV//2Ilf/ryJX/5AiV/+1Ilf/+iJX//8iV//aAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJEn/ByFW/5IiVv/+Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX/6UAAAAAAAAAAAAAAAAAAAAAAAAAACBV/xghVv/JIlf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf/TAAAAAAAAAAAAAAAAAAAAAAhWv8fIVf/3SJX//8iV///Ilf//yJX/+giVv+9IVf/oSJX/5YiV/+cIlb/tCJX/98iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yFX/84AAP8BAAAAAAAAAAAAAAAAIVn/FyJX/9wiV///Ilb/ySJV/28jVf8kAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACFS/x8hV/91Ilf/4CJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8hV//8IFf/OAAAAAAAAAAAAAAAACpV/wYiV//FIlf/rSJY/zQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACpV/wYgVv+OIlf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJW/4gAAAAAAAAAAAAAAAAAAAAAIVf/VSBT/zcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAhWf8XIlf/xSJX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AAAAAAAAIlb/dyJX//8hVv/PG1H/EwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIGD/CABV/wMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABxV/wkhV//lIVf/wh5a/xEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIVj/eiJX/5wkSf8HAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACFZ/xciVv9TAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKAAAADAAAABgAAAAAQAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/AUBA/wQqVf8GJEn/BzNm/wUAAP8BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/wEgUP8QHlX/MyJW/1MhWP9rIlf/fiNW/4whV/+SIVb/lCJX/40iVv9/I1f/ZiJW/0QgVf8YAAD/AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACFT/y4hWf8XAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAaTf8KIlf/TCFY/6AjV//VIVf/5SJX//AiV//4Ilf//iJX//8iV///Ilf//yJX//8iVv/+Ilf/9yJX/+siV//YIlf/liNX/ywAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJFv/KiJX/9AjV/9JAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAcVf8JHVf/IyFW/3whV//fIlf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJW//ghVv+gIVf/Lxdd/wsAAAAAAAAAAAAAAAAAAAAAAAAAACpV/wYkWP9AIVj/3SJX//UhWP9jAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACNU/zoiVv+UIlf/5CJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf/6iJX/54gWP9XIlP/JSBg/xAcVf8bI1X/QiFX/4oiV//iIlf//yJX//YhVv9lAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAbXv8TIlf/kCJX/+giV//8Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//4iV//xIlf/4SJX/9ohV//dIlf/6iJX//wiV///Ilf//yJX//EhV/9VAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQED/BCBY/zciV//IIlf//iJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yNX/+UkV/8yAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgUP8QIVb/cyJX/+ciV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJW/8MaTf8KAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACdi/w0iV/+VIlf/9iJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX/2EAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHFX/EiNW/6EiV///Ilf//yJX//8iV///Ilf//yJX//oiV//vIlf/5yJX/+EhV//dIlf/3CNX/90iV//hIlf/6CJX//EiV//8Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf/0kBA/wQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAjWP8dIVf/qCJX//8iV///Ilf//yJX//YhV//HIVf/mSJY/3EfWP9RIFj/NyJT/yUdWP8aIVn/FydY/xoiV/8mI1j/OiNY/1chVv98Ilf/qiJX/+EiV//+Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iVv/vIlf/TAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACdO/w0hWP+aIlf/+yJX//8iV//nIVb/iyRX/zIgVf8YHFX/CQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgP8CJFv/DiJa/yUhVv9zIlf/6CJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//0iV/+YGmb/CgAAAAAAAAAAAAAAAAAAAAAAAAAAAFX/AyFW/3MiV//zIlf/2SBW/3YaWf8UAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/wEcVf8SIlf/gSJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX/9giU/8lAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIFf/WCJW/8MgV/9vHVj/GgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACJb/y0iV/+tIlf/+SJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX/74AQP8EAAAAAAAAAAAAAAAAAAAAAAAAAAAgWP8gIlb/WR1Y/xoAVf8DAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIFT/QCFX/94iV//9Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX/+AiWv8lAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP8BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEBA/wQiVv9TIlj/6yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yFX/+0iVv9KAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACJX/2EiV//iIlf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//YhWP9jAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP8BI1f/bCJX//EiV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//shVv90AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEBA/wQhWP9jIlf/8SJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//8iV///Ilf//yJX//0hV/97AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA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AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACFX/1UiVv/PIFn/PwBA/wQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHFX/EiJX/58hVf8nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIlP/JSJV/w8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="  # 替换成你的 base64
+        icon_data = QByteArray.fromBase64(icon_base64.encode())
+
+        # 更可靠的图标加载方式
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(icon_data, "ICO"):  # 显式指定格式
+            print("❌ 图标加载失败！请检查 base64 数据或文件格式")
+        else:
+            self.setWindowIcon(QIcon(pixmap))  # 设置窗口和任务栏图标
+
+        self.setStyleSheet("""
+            QWidget { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }  /* 设置全局字体 */
+
+            QLineEdit {
+                height: 18px;  /* 输入框高度 */
+                font-size: 14px;  /* 输入框字体大小 */
+                padding: 4px 8px;  /* 输入框内边距 */
+                border: 1.5px solid #cccccc;  /* 输入框边框颜色和宽度 */
+                border-radius: 6px;  /* 输入框圆角 */
+                background-color: #ffffff;  /* 输入框背景色 */
+            }
+
+            QLineEdit:focus {
+                border-color: #4a90e2;  /* 输入框聚焦时边框颜色 */
+                /* background-color: #eaf4ff;  输入框聚焦时背景色 */
+            }
+
+            QPushButton {
+                background-color: white;            /* 白色背景 */
+                color: #3498db;                     /* 蓝色文字 */
+                border: 1px solid #3498db;          /* 蓝色边框 */
+                border-radius: 8px;                 /* 圆角半径8px */
+                padding: 10px 16px;                 /* 内边距 */
+                font-size: 12px;                    /* 字体大小 */
+                font-weight: bold;                 /* 字体加粗 */
+                letter-spacing: 0.5px;              /* 字符间距 */
+            }
+
+            QPushButton:hover {
+                background-color: #ecf5fb;          /* 鼠标悬停时浅蓝背景（视觉反馈） */
+                color: #2980b9;                     /* 悬停时文字颜色稍微加深 */
+                border: 1px solid #2980b9;          /* 边框颜色也稍微加深 */
+            }
+
+            QPushButton:pressed {
+                background-color: #d6eaf8;          /* 按下时更深一点的浅蓝背景 */
+                padding-left: 14px;                 /* 模拟按压感 */
+                padding-top: 12px;
+            }
+
+            QPushButton:disabled {
+                background-color: #eee;  /* 禁用按钮背景色 */
+                border: 1px solid #aaa;  /* 禁用按钮边框 */
+                color: #999;  /* 禁用按钮文字颜色 */
+            }
+
+            QGroupBox {
+                border: 1px solid #aaa;  /* 组框边框颜色和宽度 */
+                border-radius: 8px;  /* 组框圆角 */
+                margin-top: 10px;  /* 组框顶部外边距 */
+            }
+
+            QGroupBox::title {
+                subcontrol-origin: margin;  /* 组框标题基于边距定位 */
+                subcontrol-position: top center;  /* 组框标题居中 */
+                padding: 0 6px;  /* 组框标题内边距 */
+                font-size: 15px;  /* 组框标题字体大小 */
+                font-weight: bold;  /* 组框标题加粗 */
+            }
+
+            QMessageBox { 
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;  /* 弹窗字体 */
+                font-size: 13px;  /* 弹窗字体大小 */
+            }
+        """)
+
+        root = QVBoxLayout(self); root.setSpacing(14)
+
+        # 认证（AK/SK）
+        box_auth = QGroupBox("认证（RAM 权限 AK/SK）")
+        form = QFormLayout(); form.setLabelAlignment(Qt.AlignRight)
+        self.ed_ak = QLineEdit(self.cfg["ak"])
+        self.ed_sk = QLineEdit(self.cfg["sk"]); self.ed_sk.setEchoMode(QLineEdit.Password)
+        form.addRow("AccessKey ID：", self.ed_ak)
+        form.addRow("AccessKey Secret：", self.ed_sk)
+        btn_save = QPushButton("保存认证"); btn_save.setObjectName("save")
+        btn_save.clicked.connect(self.on_save)
+        form.addRow("", btn_save)
+        box_auth.setLayout(form)
+
+        # 操作区
+        box_op = QGroupBox(f"操作区")
+        v = QVBoxLayout(); v.setSpacing(10)
+
+        # IP 输入 + 获取公网 IP
+        row = QHBoxLayout()
+        self.ed_ip = QLineEdit(); self.ed_ip.setPlaceholderText("请输入IP地址")
+        btn_myip = QPushButton("获取本机公网IP"); btn_myip.setProperty("class", "secondary")
+        btn_myip.clicked.connect(self.on_myip)
+        row.addWidget(QLabel("要操作的 IP："))
+        row.addWidget(self.ed_ip, 1)
+        row.addWidget(btn_myip)
+        v.addLayout(row)
+
+        # 两个按钮
+        btns = QHBoxLayout()
+        btn_add = QPushButton("添加到白名单"); btn_add.clicked.connect(self.on_add)
+        btn_del = QPushButton("撤销该 IP"); btn_del.setProperty("class", "secondary"); btn_del.clicked.connect(self.on_del)
+        btns.addWidget(btn_add); btns.addWidget(btn_del)
+        v.addLayout(btns)
+
+        box_op.setLayout(v)
+
+        root.addWidget(box_auth)
+        root.addWidget(box_op, 1)
+
+    # ---------- 工具函数 ----------
+    def _mk_client(self):
+        ak = self.ed_ak.text().strip(); sk = self.ed_sk.text().strip()
+        if not ak or not sk:
+            raise ValueError("请先填写 AK/SK")
+        return mk_client(ak, sk)
+
+    def _ip_to_cidr(self):
+        ip = self.ed_ip.text().strip()
+        if not IPV4_RE.match(ip):
+            raise ValueError("请输入合法 IPv4（如 146.88.200.117）")
+        return f"{ip}/32"
+
+    def _info(self, title, text):
+        QMessageBox.information(self, title, text)
+
+    def _warn(self, title, text):
+        QMessageBox.warning(self, title, text)
+
+    def _err(self, title, text):
+        QMessageBox.critical(self, title, text)
+
+    # ---------- 事件 ----------
+    def on_save(self):
+        write_cfg({
+            "ak": self.ed_ak.text().strip(),
+            "sk": self.ed_sk.text().strip(),
+            "ACTIVE_TEMPLATE_NAME": self.template_name,
+        })
+        self._info("已保存", f"认证已保存到 {CONFIG_PATH.name}")
+
+    def on_myip(self):
+        ip = None
+        for url in ("https://ifconfig.me", "https://api.ipify.org"):
+            try:
+                ip = requests.get(url, timeout=5).text.strip()
+                if IPV4_RE.match(ip):
+                    break
+            except Exception:
+                pass
+        if not ip:
+            self._warn("提示", "无法获取公网 IP"); return
+        self.ed_ip.setText(ip)
+        self._info("已填入", f"检测到公网 IP：{ip}")
+
+    def on_add(self):
+        try:
+            client = self._mk_client()
+            cidr = self._ip_to_cidr()
+            tpl_id = ensure_template(client, self.template_name)
+
+            # 模板内查重
+            exists = list_template_rules(client, tpl_id)
+            for r in exists:
+                if str(r.get("RuleProtocol")) == "TCP" and str(r.get("Port")) == PORT_FIXED and str(r.get("SourceCidrIp")) == cidr:
+                    apply_template_to_instance(client, tpl_id)
+                    self._info("已生效", f"{cidr} 已在白名单中（TCP:{PORT_FIXED}），已重新应用到实例确保生效。")
+                    return
+
+            rid = add_rule_to_template(client, tpl_id, cidr, remark="GUI 添加")
+            apply_template_to_instance(client, tpl_id)
+            self._info("添加成功", f"已添加规则：{cidr} → TCP:{PORT_FIXED}\n模板规则ID：{rid}\n已应用到实例。")
+
+        except Exception as e:
+            self._err("添加失败", str(e))
+
+    def on_del(self):
+        try:
+            client = self._mk_client()
+            cidr = self._ip_to_cidr()
+            tpl_id = ensure_template(client, self.template_name)
+            rules = list_template_rules(client, tpl_id)
+
+            # 找到要删的模板规则
+            target = None
+            for r in rules:
+                if str(r.get("RuleProtocol")) == "TCP" and str(r.get("Port")) == PORT_FIXED and str(r.get("SourceCidrIp")) == cidr:
+                    target = r.get("FirewallTemplateRuleId"); break
+
+            # 模板里没有：直接清理实例残留
+            if not target:
+                cleaned = delete_instance_rules_by_match(client, cidr)
+                if cleaned:
+                    self._info("已撤销", f"模板中未找到该规则，但已从实例清理残留：\n{', '.join(cleaned)}")
+                else:
+                    self._warn("无变更", "模板和实例中均未发现该 IP 的 8000 规则。")
+                return
+
+            # 先删模板（或兜底重建并切换名称）
+            new_tpl_id, new_tpl_name = delete_rule_from_template(client, tpl_id, target, self.template_name)
+            if new_tpl_name != self.template_name:
+                self.template_name = new_tpl_name
+                cfg_now = read_cfg(); cfg_now["ACTIVE_TEMPLATE_NAME"] = new_tpl_name; write_cfg(cfg_now)
+
+            # 再应用一次（兜底时函数内已应用，这里保险起见再尝试）
+            try:
+                apply_template_to_instance(client, new_tpl_id)
+            except Exception:
+                pass
+
+            # 清理实例残留
+            cleaned = delete_instance_rules_by_match(client, cidr)
+            detail = f"\n已从实例清理：{', '.join(cleaned)}" if cleaned else "\n实例层无残留。"
+            self._info("撤销成功", f"已撤销 {cidr} 的 TCP:{PORT_FIXED} 白名单。{detail}")
+
+        except Exception as e:
+            self._err("撤销失败", str(e))
+
+
+def main():
+    app = QApplication(sys.argv)
+
+    # —— 启动口令校验 —— #
+    MAX_TRY = 3
+    for i in range(MAX_TRY):
+        pwd, ok = QInputDialog.getText(
+            None,
+            "请输入密码",
+            "启动密码：",
+            QLineEdit.Password
+        )
+        if not ok:  # 用户点了取消
+            return
+        if pwd == "tx007":  # ← 初始口令，之后你改这里即可
+            break
+        QMessageBox.critical(None, "密码错误", f"口令不正确（{i+1}/{MAX_TRY}）")
+    else:
+        # 尝试次数耗尽
+        QMessageBox.warning(None, "已退出", "多次口令错误，程序已退出。")
+        return
+
+    # 通过校验后再打开主窗口
+    w = App()
+    w.show()
+    sys.exit(app.exec_())
+
+
+if __name__ == "__main__":
+    main()
+
