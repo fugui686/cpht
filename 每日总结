@@ -1,0 +1,194 @@
+import sys
+from PyQt5.QtWidgets import QApplication, QWidget, QLineEdit, QPushButton, QMessageBox, QDateEdit
+from configparser import ConfigParser
+import requests
+from datetime import datetime, timedelta
+from openpyxl import load_workbook
+import os
+
+class LoginWindow(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.initUI()
+
+    def initUI(self):  # 初始化界面
+        self.setWindowTitle('昨日彩票每日总结')
+        self.setGeometry(200, 200, 300, 400)
+
+        # 创建账号输入框
+        self.account_input = QLineEdit(self)
+        self.account_input.setPlaceholderText('port')
+        self.account_input.setGeometry(50, 20, 200, 30)
+
+        # 创建密码输入框
+        self.entry_token = QLineEdit(self)
+        self.entry_token.setPlaceholderText('Cookie')
+        self.entry_token.setGeometry(50, 80, 200, 30)
+
+        self.entry_ht = QLineEdit(self)
+        self.entry_ht.setPlaceholderText('请输入后台')
+        self.entry_ht.setGeometry(50, 130, 200, 30)
+
+        # 创建手动保存按钮
+        self.save_button = QPushButton("保存配置", self)
+        self.save_button.setGeometry(100, 180, 100, 30)
+        self.save_button.clicked.connect(self.manual_save)
+
+        # 创建获取数据按钮
+        self.submit_button = QPushButton('默认获取昨日数据', self)
+        self.submit_button.setGeometry(80, 230, 130, 30)
+        self.submit_button.clicked.connect(self.print_accoun)
+
+        self.load_config()
+
+    def save_config(self, port, token, ht):  # 保存配置到文件
+        config = ConfigParser()
+        config['USER'] = {'Port': port, 'Token': token, 'ht': ht}
+        with open('config.ini', 'w') as configfile:
+            config.write(configfile)
+
+    def load_config(self):  # 从文件加载配置
+        config = ConfigParser()
+        config.read('config.ini')
+        if 'USER' in config:
+            self.account_input.setText(config['USER']['Port'])
+            self.entry_token.setText(config['USER']['Token'])
+            self.entry_ht.setText(config['USER']['ht'])
+
+    def print_accoun(self):  # 默认获取昨日数据
+        try:
+            port = self.account_input.text()
+            token = self.entry_token.text()
+            ht = self.entry_ht.text()
+
+            dqsj = datetime.now()
+            zt = dqsj - timedelta(days=1)
+            开始时间 = zt.strftime('%Y-%m-%d')
+            print(开始时间)
+            昨天 = zt.strftime('%m月%d日')
+            print(昨天)
+
+            headers = {
+                'Cookie': token,
+            }
+
+            url = f'http://back.{port}.com/back/back/sscDataReportUser/usersWinAndLoseList'
+
+            params = {
+                'limit': '10000',
+                'offset': '0',
+                'options': '1',
+                'username': '',
+                'usernames': '',
+                'parentUserName': '',
+                'startTime': 开始时间,
+                'endTime': 开始时间,
+                'orderBy': 'profit desc',
+                '_': '1734114023662',
+            }
+
+            response = requests.get(url, params=params, headers=headers)
+            if response.status_code == 200:
+                data = response.json()['rows']
+
+                wjm = '每日总结.xlsx'
+                wb = load_workbook(wjm)
+                ws = wb.active
+
+                # 初始化总和和条数
+                优惠金额总和 = 0
+                领取优惠人数 = 0
+
+                盈利5000元以上总和 = 0
+                盈利5000元以上人数 = 0
+                盈利5000元以上充值金额 = 0
+                盈利5000元以上提现金额 = 0
+                盈利5000元以上总和整数 = 0
+
+                盈利10元以上总和 = 0
+                盈利10元以上人数 = 0
+                盈利10元以上充值金额 = 0
+                盈利10元以上提现金额 = 0
+                盈利10元以上洗码金额 = 0
+                盈利10元以上总和整数 = 0
+
+                for aa in data:
+
+                    充值金额 = aa.get('rechargeAmount', 0)
+                    提现金额 = aa.get('withdrawAmount', 0)
+                    投注金额 = aa.get('betsAmount', 0)
+                    盈亏金额 = aa.get('profit', 0)
+                    优惠金额 = aa.get('activityAmount', 0)  # 如果没有该字段，默认值为0
+                    # 判断优惠金额是否大于100
+                    if 优惠金额 > 100:
+                        优惠金额总和 += 优惠金额  # 累加总和
+                        领取优惠人数 += 1  # 满足条件的条数+1
+
+                    if 盈亏金额 < -5000:
+                        盈利5000元以上总和 += 盈亏金额
+                        盈利5000元以上人数 += 1
+                        盈利5000元以上充值金额 += 充值金额
+                        盈利5000元以上提现金额 += 提现金额
+                        盈利5000元以上总和整数 = abs(盈利5000元以上总和)
+
+                    if 盈亏金额 < -10:
+                        盈利10元以上总和 += 盈亏金额
+                        盈利10元以上人数 += 1
+                        盈利10元以上充值金额 += 充值金额
+                        盈利10元以上提现金额 += 提现金额
+                        盈利10元以上洗码金额 += 投注金额
+                        盈利10元以上总和整数 = abs(盈利10元以上总和)
+
+                print("优惠金额大于100的总和:", 优惠金额总和)
+                print("优惠金额大于100的人数:", 领取优惠人数)
+
+                print("盈利5000元以上人数:", 盈利5000元以上人数)
+                print("盈利5000元以上充值金额:", 盈利5000元以上充值金额)
+                print("盈利5000元以上提现金额:", 盈利5000元以上提现金额)
+                print("盈利5000元以上总和整数:", 盈利5000元以上总和整数)
+
+                print("盈利10元以上人数:", 盈利10元以上人数)
+                print("盈利10元以上充值金额:", 盈利10元以上充值金额)
+                print("盈利10元以上提现金额:", 盈利10元以上提现金额)
+                print("盈利10元以上洗码金额:", 盈利10元以上洗码金额)
+                print("盈利10元以上总和整数:", 盈利10元以上总和整数)
+
+                ws['C2'] = 领取优惠人数
+                ws['E2'] = 优惠金额总和
+                ws['C3'] = 盈利5000元以上人数
+                ws['E3'] = 盈利5000元以上充值金额
+                ws['G3'] = 盈利5000元以上总和整数
+                ws['I3'] = 盈利5000元以上提现金额
+                ws['C5'] = 盈利10元以上人数
+                ws['E5'] = 盈利10元以上充值金额
+                ws['E6'] = 盈利10元以上洗码金额
+                ws['G5'] = 盈利10元以上总和整数
+                ws['I5'] = 盈利10元以上提现金额
+                ws['A3'] = 昨天
+                ws['A1'] = f'{ht}会员每日总结'
+
+                wb.save('每日总结.xlsx')
+                os.startfile('每日总结.xlsx')
+
+        except Exception as e:
+            QMessageBox.critical(self, "错误", str(e))
+
+    def manual_save(self):  # 手动保存配置
+        port = self.account_input.text()
+        token = self.entry_token.text()
+        ht = self.entry_ht.text()
+
+        if not (port and token and ht):
+            QMessageBox.warning(self, "输入错误", "请填写所有字段！")
+            return
+
+        self.save_config(port, token, ht)
+        QMessageBox.information(self, "提示", "配置已保存！")
+
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+
+    login_window = LoginWindow()
+    login_window.show()
+
+    sys.exit(app.exec_())
