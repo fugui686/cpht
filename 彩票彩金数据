@@ -1,0 +1,450 @@
+import tkinter as tk
+from tkinter import messagebox
+import os
+from datetime import datetime, timedelta
+import requests
+from openpyxl.workbook import Workbook
+
+当前时间 = datetime.now()
+昨天 = (当前时间 - timedelta(days=1)).strftime('%Y-%m-%d')
+今天 = 当前时间.strftime('%Y-%m-%d')
+
+def run_script():
+    try:
+        tokenk = entry_password.get()  # 获取 Cookie
+        端口 = entry_port.get()  # 获取 URL 中的数字部分
+
+        headers = {
+            'Cookie': tokenk,
+        }
+
+        url = f'http://back.{端口}.com/back/back/sscPayChannelDataReport/queryGiftCashSysWithdrawSum'  # 昨天红包礼金
+        data = {
+            'options': '1',
+            'startTime': 昨天,
+            'endTime': 昨天,
+        }
+        response = requests.post(url, headers=headers, data=data)
+        if response.status_code == 200:
+            data = response.json()
+            昨天红包礼金 = data.get('cusSumGiftAmount', 0)
+            昨天红包人数 = data.get('cusSumGiftCount', 0)
+
+        url = f'http://back.{端口}.com/back/back/sscPayChannelDataReport/queryThirdActivity'  # 昨天第三方活动
+        data = {
+            'options': '1',
+            'startTime': 昨天,
+            'endTime': 昨天,
+            'type': '1',
+            'rechargeType': '15',
+        }
+        response = requests.post(url, headers=headers, data=data)
+        if response.status_code == 200:
+            data = response.json()
+            昨天第三方活动 = data.get('sumRealAmount', 0)
+            昨天第三方人数 = data.get('userCount', 0)
+
+        url = f'http://back.{端口}.com/back/back/sscPayChannelDataReport/queryRecordAmount'  # 昨天签到奖励
+        data = {
+            'options': '1',
+            'startTime': 昨天,
+            'endTime': 昨天,
+            'type': '3',
+        }
+        response = requests.post(url, headers=headers, data=data)
+        if response.status_code == 200:
+            data = response.json()
+            昨天签到奖励 = data.get('sumRealAmount', 0)
+            昨天签到人数 = data.get('userCount', 0)
+
+        url = f'http://back.{端口}.com/back/back/sscPayChannelDataReport/queryRecordAmount'  # 昨天返水金额
+        data = {
+            'options': '1',
+            'startTime': 昨天,
+            'endTime': 昨天,
+            'type': '1',
+        }
+        response = requests.post(url, headers=headers, data=data)
+        if response.status_code == 200:
+            data = response.json()
+            昨天返水金额 = data.get('sumRealAmount', 0)
+            昨天返水人数 = data.get('userCount', 0)
+
+        url = f'http://back.{端口}.com/back/back/sscPayChannelDataReport/queryRecordAmount'  # 昨天全民代理返水统计
+        data = {
+            'options': '1',
+            'startTime': 昨天,
+            'endTime': 昨天,
+            'type': '4',
+        }
+        response = requests.post(url, headers=headers, data=data)
+        if response.status_code == 200:
+            data = response.json()
+            昨天全民代理返水统计 = data.get('sumRealAmount', 0)
+            昨天全民代理返水人数 = data.get('userCount', 0)
+
+        url = f'http://back.{端口}.com/back/back/sscPayChannelDataReport/queryLotteryActivity'  # 昨天晋级奖金
+        data = {
+            'options': '1',
+            'startTime': 昨天,
+            'endTime': 昨天,
+            'rebateType': '4',
+        }
+        response = requests.post(url, headers=headers, data=data)
+        if response.status_code == 200:
+            data = response.json()
+            昨天晋级奖金 = data.get('sumRealAmount', 0)
+            昨天晋级人数 = data.get('userCount', 0)
+
+        url = f'http://back.{端口}.com/back/back/sscPayChannelDataReport/queryLotteryActivity'  # 昨天得意彩金
+        data = {
+            'options': '1',
+            'startTime': 昨天,
+            'endTime': 昨天,
+            'rebateType': '6',
+        }
+        response = requests.post(url, headers=headers, data=data)
+        if response.status_code == 200:
+            data = response.json()
+            昨天得意彩金 = data.get('sumRealAmount', 0)
+            昨天得意人数 = data.get('userCount', 0)
+
+        url = f'http://back.{端口}.com/back/back/sscPayChannelDataReport/queryLotteryActivity'  # 昨天VIP日奖励
+        data = {
+            'options': '1',
+            'startTime': 昨天,
+            'endTime': 昨天,
+            'rebateType': '7',
+        }
+        response = requests.post(url, headers=headers, data=data)
+        if response.status_code == 200:
+            data = response.json()
+            昨天VIP日奖励 = data.get('sumRealAmount', 0)  # 使用默认值0，避免值为None时出错
+            昨天VIP日人数 = data.get('cusSumGiftCount', 0)  # 使用默认值0，避免值为None时出错
+
+        url = f'http://back.{端口}.com/back/back/sscPayChannelDataReport/queryYbInterestRecord'  # 昨天余额宝利息
+        data = {
+            'options': '1',
+            'startTime': 昨天,
+            'endTime': 昨天,
+            'rebateType': '7',
+        }
+        response = requests.post(url, headers=headers, data=data)
+        if response.status_code == 200:
+            data = response.json()
+            昨天余额宝利息 = data.get('sumRealAmount', 0)
+            昨天余额宝人数 = data.get('userCount', 0)
+            url = f'http://back.{端口}.com/back/back/sscRechargeOrderArtificial/sscRechargeOrderArtificialList'  # 人工出入款
+            data = {
+                'limit': '9999',
+                'offset': '0',
+                'istest': '0',
+                'startUpdate': 昨天,
+                'endUpdate': 今天,
+            }
+            response = requests.post(url, headers=headers, data=data)
+            if response.status_code == 200:
+                data = response.json()['rows']
+                刮刮乐金额总和 = 0
+                刮刮乐笔数 = 0
+                刮刮乐账号集合 = set()
+                for dd in data:
+                    if dd['orderRemark'] == '刮刮乐':
+                        刮刮乐金额总和 += dd.get('amount', 0)
+                        刮刮乐笔数 += 1
+                        刮刮乐账号集合.add(dd.get('username'))
+                刮刮乐人数 = len(刮刮乐账号集合)
+
+                棋牌救援金额总和 = 0
+                棋牌救援笔数 = 0
+                棋牌救援账号集合 = set()
+                for dd in data:
+                    if dd['orderRemark'] == '棋牌救援':
+                        棋牌救援金额总和 += dd.get('amount', 0)
+                        棋牌救援笔数 += 1
+                        棋牌救援账号集合.add(dd.get('username'))
+                棋牌救援人数 = len(棋牌救援账号集合)
+
+                棋牌盈利金额总和 = 0
+                棋牌盈利笔数 = 0
+                棋牌盈利账号集合 = set()
+                for dd in data:
+                    if dd['orderRemark'] == '棋牌盈利':
+                        棋牌盈利金额总和 += dd.get('amount', 0)
+                        棋牌盈利笔数 += 1
+                        棋牌盈利账号集合.add(dd.get('username'))
+                棋牌盈利人数 = len(棋牌盈利账号集合)
+
+                棋牌闯关金额总和 = 0
+                棋牌闯关笔数 = 0
+                棋牌闯关账号集合 = set()
+                for dd in data:
+                    if dd['orderRemark'] == '棋牌闯关':
+                        棋牌闯关金额总和 += dd.get('amount', 0)
+                        棋牌闯关笔数 += 1
+                        棋牌闯关账号集合.add(dd.get('username'))
+                棋牌闯关人数 = len(棋牌闯关账号集合)
+
+                棋牌得意金额总和 = 0
+                棋牌得意笔数 = 0
+                棋牌得意账号集合 = set()
+                for dd in data:
+                    if dd['orderRemark'] == '棋牌得意':
+                        棋牌得意金额总和 += dd.get('amount', 0)
+                        棋牌得意笔数 += 1
+                        棋牌得意账号集合.add(dd.get('username'))
+                棋牌得意人数 = len(棋牌得意账号集合)
+
+                棋牌对局金额总和 = 0
+                棋牌对局笔数 = 0
+                棋牌对局账号集合 = set()
+                for dd in data:
+                    if dd['orderRemark'] == '棋牌对局':
+                        棋牌对局金额总和 += dd.get('amount', 0)
+                        棋牌对局笔数 += 1
+                        棋牌对局账号集合.add(dd.get('username'))
+                棋牌对局人数 = len(棋牌对局账号集合)
+
+                逢2彩金金额总和 = 0
+                逢2彩金笔数 = 0
+                逢2彩金账号集合 = set()
+                for dd in data:
+                    if dd['orderRemark'] == '逢2彩金':
+                        逢2彩金金额总和 += dd.get('amount', 0)
+                        逢2彩金笔数 += 1
+                        逢2彩金账号集合.add(dd.get('username'))
+                逢2彩金人数 = len(逢2彩金账号集合)
+
+                优惠金额总和 = 0
+                优惠笔数 = 0
+                优惠账号集合 = set()
+                for dd in data:
+                    if dd['orderRemark'] == '优惠':
+                        优惠金额总和 += dd.get('amount', 0)
+                        优惠笔数 += 1
+                        优惠账号集合.add(dd.get('username'))
+                优惠人数 = len(优惠账号集合)
+
+            url = f'http://back.{端口}.com/back/back/sscRisk/coinLogList'  # 账变GP入款
+            params = {
+                'limit': '9999',
+                'offset': '0',
+                'liqType': '8',
+                'username': '',
+                'startTime': 昨天,
+                'endTime': 今天,
+            }
+            # 发起POST请求
+            response = requests.get(url, headers=headers, params=params)
+            if response.status_code == 200:
+                data = response.json()['rows']
+
+            GP入款优惠笔数_BO = 0
+            GP入款优惠金额_BO = 0
+            GP入款优惠人数_BO = set()
+
+            GP入款优惠笔数_VB = 0
+            GP入款优惠金额_VB = 0
+            GP入款优惠人数_VB = set()
+
+            for dd in data:
+                if dd['orderId'].startswith('BO'):
+                    GP入款优惠笔数_BO += 1
+                    GP入款优惠金额_BO += dd['coin']
+                    GP入款优惠人数_BO.add(dd['username'])  # 统计订单号以BO开头的账号
+                elif dd['orderId'].startswith('VB'):
+                    GP入款优惠笔数_VB += 1
+                    GP入款优惠金额_VB += dd['coin']
+                    GP入款优惠人数_VB.add(dd['username'])  # 统计订单号以VB开头的账号
+
+            # 汇总数据
+            总GP入款优惠笔数 = GP入款优惠笔数_BO + GP入款优惠笔数_VB
+            总GP入款优惠金额 = GP入款优惠金额_BO + GP入款优惠金额_VB
+            总GP入款优惠人数 = GP入款优惠人数_BO.union(GP入款优惠人数_VB)  # 合并两个集
+
+            USDT入款优惠笔数 = 0
+            USDT入款优惠金额 = 0
+            USDT入款优惠人数 = set()
+
+            for dd in data:
+                if dd['orderId'].startswith('DG'):
+                    USDT入款优惠笔数 += 1
+                    USDT入款优惠金额 += dd['coin']
+                    USDT入款优惠人数.add(dd['username'])  # 只统计订单号以BO开头的账号
+
+            url = f'http://back.{端口}.com/back/back/sscRechargeOrder/sscRechargeOrderList'  # 公司入款余额宝
+            params = {
+                'limit': '9999',
+                'offset': '0',
+                'istest': '0',
+                'status': '2',
+                'transferType': '余额宝',
+                'startUpdate': 昨天,
+                'endUpdate': 昨天,
+            }
+            # 发起POST请求
+            response = requests.get(url, headers=headers, params=params)
+            if response.status_code == 200:
+                data = response.json()['rows']
+                余额宝金额 = 0
+                余额宝笔数 = 0
+                余额宝人数 = set()
+                for dd in data:
+                    余额宝金额 += dd.get('activityAmount')
+                    余额宝笔数 += 1
+                    余额宝人数.add(dd.get('username'))
+
+            url = f'http://back.{端口}.com/back/back/sscRechargeOrderThird/sscRechargeOrderThirdList'  # 第三方入款优惠
+            params = {
+                'limit': '9999',
+                'offset': '0',
+                'istest': '0',
+                'status': '2',
+                'startUpdate': 昨天,
+                'endUpdate': 今天,
+            }
+            # 发起POST请求
+            response = requests.get(url, headers=headers, params=params)
+            if response.status_code == 200:
+                data = response.json()['rows']
+                第三方优惠笔数 = 0
+                for dd in data:
+                    if dd.get('activityAmount') > 0:  # 过滤掉金额为0的订单
+                        第三方优惠笔数 += 1
+            else:
+                messagebox.showerror('错误', f'请求失败，状态码: {response.status_code}')
+                return
+
+            # 创建 Excel 文件和工作表
+            wb = Workbook()
+            ws = wb.active
+            # 写入表头
+            ws.append(['彩金名称', '人数', '笔数', '金额'])
+
+            # 写入数据
+            ws.cell(row=2, column=1, value='红包礼金')
+            ws.cell(row=2, column=2, value=昨天红包人数)
+            ws.cell(row=2, column=3, value=昨天红包人数)
+            ws.cell(row=2, column=4, value=昨天红包礼金)
+            ws.cell(row=3, column=1, value='第三方入款优惠')
+            ws.cell(row=3, column=2, value=昨天第三方人数)
+            ws.cell(row=3, column=3, value=第三方优惠笔数)
+            ws.cell(row=3, column=4, value=昨天第三方活动)
+            ws.cell(row=4, column=1, value='签到奖励')
+            ws.cell(row=4, column=2, value=昨天签到人数)
+            ws.cell(row=4, column=3, value=昨天签到人数)
+            ws.cell(row=4, column=4, value=昨天签到奖励)
+            ws.cell(row=5, column=1, value='返水金额')
+            ws.cell(row=5, column=2, value=昨天返水人数)
+            ws.cell(row=5, column=3, value=昨天返水人数)
+            ws.cell(row=5, column=4, value=昨天返水金额)
+            ws.cell(row=6, column=1, value='全民代理返水统计')
+            ws.cell(row=6, column=2, value=昨天全民代理返水人数)
+            ws.cell(row=6, column=3, value=昨天全民代理返水人数)
+            ws.cell(row=6, column=4, value=昨天全民代理返水统计)
+            ws.cell(row=7, column=1, value='晋级奖金')
+            ws.cell(row=7, column=2, value=昨天晋级人数)
+            ws.cell(row=7, column=3, value=昨天晋级人数)
+            ws.cell(row=7, column=4, value=昨天晋级奖金)
+            ws.cell(row=8, column=1, value='得意彩金')
+            ws.cell(row=8, column=2, value=昨天得意人数)
+            ws.cell(row=8, column=3, value=昨天得意人数)
+            ws.cell(row=8, column=4, value=昨天得意彩金)
+            ws.cell(row=9, column=1, value='VIP会员日奖励（逢8号）')
+            ws.cell(row=9, column=2, value=昨天VIP日人数)
+            ws.cell(row=9, column=3, value=昨天VIP日人数)
+            ws.cell(row=9, column=4, value=昨天VIP日奖励)
+            ws.cell(row=10, column=1, value='余额宝利息')
+            ws.cell(row=10, column=2, value=昨天余额宝人数)
+            ws.cell(row=10, column=3, value=昨天余额宝人数)
+            ws.cell(row=10, column=4, value=昨天余额宝利息)
+            ws.cell(row=11, column=1, value='刮刮乐')
+            ws.cell(row=11, column=2, value=刮刮乐人数)
+            ws.cell(row=11, column=3, value=刮刮乐笔数)
+            ws.cell(row=11, column=4, value=刮刮乐金额总和)
+            ws.cell(row=12, column=1, value='棋牌救援')
+            ws.cell(row=12, column=2, value=棋牌救援人数)
+            ws.cell(row=12, column=3, value=棋牌救援笔数)
+            ws.cell(row=12, column=4, value=棋牌救援金额总和)
+            ws.cell(row=13, column=1, value='棋牌盈利')
+            ws.cell(row=13, column=2, value=棋牌盈利人数)
+            ws.cell(row=13, column=3, value=棋牌盈利笔数)
+            ws.cell(row=13, column=4, value=棋牌盈利金额总和)
+            ws.cell(row=14, column=1, value='棋牌闯关')
+            ws.cell(row=14, column=2, value=棋牌闯关人数)
+            ws.cell(row=14, column=3, value=棋牌闯关笔数)
+            ws.cell(row=14, column=4, value=棋牌闯关金额总和)
+            ws.cell(row=15, column=1, value='棋牌得意')
+            ws.cell(row=15, column=2, value=棋牌得意人数)
+            ws.cell(row=15, column=3, value=棋牌得意笔数)
+            ws.cell(row=15, column=4, value=棋牌得意金额总和)
+            ws.cell(row=16, column=1, value='棋牌对局')
+            ws.cell(row=16, column=2, value=棋牌对局人数)
+            ws.cell(row=16, column=3, value=棋牌对局笔数)
+            ws.cell(row=16, column=4, value=棋牌对局金额总和)
+            ws.cell(row=17, column=1, value='逢2彩金7%入款优惠')
+            ws.cell(row=17, column=2, value=逢2彩金人数)
+            ws.cell(row=17, column=3, value=逢2彩金笔数)
+            ws.cell(row=17, column=4, value=逢2彩金金额总和)
+            ws.cell(row=18, column=1, value='人工加优惠流水')
+            ws.cell(row=18, column=2, value=优惠人数)
+            ws.cell(row=18, column=3, value=优惠笔数)
+            ws.cell(row=18, column=4, value=优惠金额总和)
+            ws.cell(row=19, column=1, value='GP入款优惠')
+            ws.cell(row=19, column=2, value=len(总GP入款优惠人数))
+            ws.cell(row=19, column=3, value=总GP入款优惠笔数)
+            ws.cell(row=19, column=4, value=总GP入款优惠金额)
+            ws.cell(row=20, column=1, value='USDT数字货币入款优惠')
+            ws.cell(row=20, column=2, value=len(USDT入款优惠人数))
+            ws.cell(row=20, column=3, value=USDT入款优惠笔数)
+            ws.cell(row=20, column=4, value=USDT入款优惠金额)
+            ws.cell(row=21, column=1, value='余额宝充值优惠')
+            ws.cell(row=21, column=2, value=len(余额宝人数))
+            ws.cell(row=21, column=3, value=余额宝笔数)
+            ws.cell(row=21, column=4, value=余额宝金额)
+            ws.cell(row=22, column=1, value='神秘彩金')
+            ws.cell(row=22, column=2, value=0)
+            ws.cell(row=22, column=3, value=0)
+            ws.cell(row=22, column=4, value=0)
+            ws.cell(row=23, column=1, value='回归彩金')
+            ws.cell(row=23, column=2, value=0)
+            ws.cell(row=23, column=3, value=0)
+            ws.cell(row=23, column=4, value=0)
+            ws.cell(row=24, column=1, value='维护彩金')
+            ws.cell(row=24, column=2, value=0)
+            ws.cell(row=24, column=3, value=0)
+            ws.cell(row=24, column=4, value=0)
+
+            # 保存工作簿
+            wb.save("活动礼金.xlsx")
+            # 自动打开表格
+            os.startfile('活动礼金.xlsx')
+    except Exception as e:
+        messagebox.showerror("错误", str(e))
+
+# 创建主窗口
+root = tk.Tk()
+root.title("获取昨日活动礼金")
+root.geometry("330x150")  # 设置窗口大小
+
+# 设置字体
+font_style = ("Helvetica", 12)
+font_styl = ("Helvetica", 15)
+# 创建标签和输入框
+label_port = tk.Label(root, text="请输入端口:", font=font_style)
+label_port.grid(row=0, column=0, padx=10, pady=5, sticky='e')  # 添加水平和垂直边距
+
+entry_port = tk.Entry(root, font=font_style)
+entry_port.grid(row=0, column=1, padx=10, pady=5)
+
+label_password = tk.Label(root, text="请输入密码:", font=font_style,)
+label_password.grid(row=1, column=0, padx=10, pady=5, sticky='e')
+
+entry_password = tk.Entry(root,font=font_style)
+entry_password.grid(row=1, column=1, padx=10, pady=5)
+
+submit_button = tk.Button(root, text="提交查询", command=run_script, font=font_styl, fg='red')
+submit_button.grid(row=2, columnspan=2, pady=10)
+
+# 运行主循环
+root.mainloop()
