@@ -1,0 +1,3001 @@
+import requests
+import os
+import tkinter as tk
+from tkinter import messagebox
+from datetime import datetime, timedelta
+from openpyxl import Workbook, load_workbook
+from configparser import ConfigParser
+from threading import Thread, Event
+import time
+from requests.exceptions import RequestException
+
+# 全局变量，表示是否处于智能模式
+in_smart_mode = False
+stop_event = Event()  # 事件对象，用于控制线程
+
+
+def smart_mode():
+    global in_smart_mode
+    if in_smart_mode:
+        messagebox.showinfo("提示", "程序正在智能模式中，请等待智能模式结束。")
+        return
+
+    def check_time():
+        global in_smart_mode
+        in_smart_mode = True
+        while not stop_event.is_set():
+            current_time = datetime.now()
+            if current_time.minute == 59 and current_time.second == 5:
+                countdown_label.config(text="正在运行程序")
+                run_script_today()
+                countdown_label.config(text=f"运行结束，将在下个时段59分05秒自动运行")
+            time.sleep(1)
+        in_smart_mode = False
+
+    messagebox.showinfo("智能模式", "程序将在每个小时的59分05秒自动开启")
+    countdown_label.config(text="程序将在59分05秒自动运行")
+    check_thread = Thread(target=check_time)
+    check_thread.start()
+
+
+# 函数：保存配置到文件
+def save_config(port, cookie):
+    config = ConfigParser()
+    config['USER'] = {
+        'Port': port,
+        'cookie': cookie,
+    }
+    with open('config.ini', 'w') as configfile:
+        config.write(configfile)
+
+
+# 函数：从文件加载配置
+def load_config():
+    config = ConfigParser()
+    config.read('config.ini')
+    if 'USER' in config:
+        return (config['USER']['Port'], config['USER']['cookie'])
+    else:
+        return '', ''
+
+
+def run_script_today():  # 当前数据
+    try:
+        port = entry_port.get()
+        cookie = entry_password.get()
+
+        current_date = datetime.now()
+        date = current_date.strftime("%Y-%m-%d")
+
+        # 设置请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+
+        url = f"http://back.{port}.com/back/back/sscDataReport/queryOnlineUsers"
+
+        在线人数 = requests.post(url, headers=headers).text  # 提取在线人数并转换为字符串
+        print("在线人数:", 在线人数)
+
+        # 定义一个函数来发送请求
+        def send_request(url, data):
+            # 设置请求头
+            headers = {
+                "Accept": "*/*",
+                "Accept-Encoding": "gzip, deflate",
+                "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+                "Connection": "keep-alive",
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "cookie": cookie,
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+            }
+
+            # 发送 POST 请求并获取响应
+            response = requests.post(url, headers=headers, data=data)
+
+            # 解析响应数据
+            if response.status_code == 200:
+                return response.json()
+            else:
+                return None
+
+        # 设置请求的 URL
+        url1 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryBetsUsersTotalNum"
+        url2 = f"http://back.{port}.com/back/back/sscDataReport/thedayPayUsers"
+        url3 = f"http://back.{port}.com/back/back/sscDataReport/queryRefillPerson"
+        url4 = f"http://back.{port}.com/back/back/sscDataReport/queryRegRate"
+
+        # 构造请求体数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date
+        }
+
+        # 发送第一个请求
+        response1 = send_request(url1, data)
+        response2 = send_request(url2, data)
+        response3 = send_request(url3, data)
+        response4 = send_request(url4, data)
+        注册会员 = response4.get('regPsersonData')
+        print("注册会员", 注册会员)
+        充值人数 = response2.get('totalRecharge')
+        print("充值人数", 充值人数)
+        投注会员 = response1.get('betsPersonNum')
+        print("投注会员", 投注会员)
+        新增人数 = response3.get('refillPersonData')
+        print("新增人数", 新增人数)
+
+        # 定义请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+
+        # 定义发送请求的函数
+        def send_request(url, data):
+            # 发送 POST 请求
+            response = requests.post(url, headers=headers, data=data)
+            # 检查响应状态码
+            if response.status_code == 200:
+                # 解析响应数据为 JSON 格式
+                response_data = response.json()
+                return response_data
+            else:
+                print("请求失败，状态码：", response.status_code)
+                return None
+
+        # 设置请求的 URL
+        url1 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryAllOnLineData"
+        url2 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryAllUnderLineData"
+        url4 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryYebRecharge"
+        url5 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryGiftCashRecharge"
+
+        # 设置请求的数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+
+        # 发送第一个请求
+        response1 = send_request(url1, data)
+
+        # 发送第二个请求
+        response2 = send_request(url2, data)
+
+        # 发送第四个请求
+        response5 = send_request(url5, data)
+
+        # 发送第四个请求
+        response4 = send_request(url4, data)
+
+        # 设置人工入款请求的 URL 和数据
+        url = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryArtificial"
+
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "1",
+            "rechargeType": "14"
+        }
+
+        # 发送人工入款请求
+        response = requests.post(url, headers=headers, data=data)
+
+        if response.status_code == 200:
+            try:
+                response_data = response.json()
+                rgck = response_data.get('sumRealAmount')
+
+                if rgck is not None:
+                    print("未找到总充值金额字段！")
+            except ValueError:
+                rgck = 0
+
+        # 计算入款金额
+        total_sum1 = sum(item.get('sumRealAmount', 0) for item in response1) + sum(
+            item.get('sumRealAmount', 0) for item in response2) + response5.get('simpleTakeSumGiftAmount', 0) + abs(
+            response4.get('sumRealAmount', 0))
+
+        # 计算现金入款
+        total_sum0 = response5.get('simpleTakeSumGiftAmount', 0) + abs(response4.get('sumRealAmount', 0))
+
+        # 计算总入款金额（包括人工入款）
+        总存款 = total_sum1 + rgck
+
+        # 打印总入款金额
+        print("总存款:", 总存款)
+
+        # 定义一个函数来发送请求
+        def send_request(url, data):
+            # 设置请求头
+            headers = {
+                "Accept": "*/*",
+                "Accept-Encoding": "gzip, deflate",
+                "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+                "Connection": "keep-alive",
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "cookie": cookie,
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+            }
+
+            # 发送 POST 请求并获取响应
+            response = requests.post(url, headers=headers, data=data)
+
+            # 解析响应数据
+            if response.status_code == 200:
+                return response.json()
+            else:
+                return None
+
+        # 设置请求的 URL
+        url1 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryYebWithdraw"
+        url2 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryWithDraw"
+        url3 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryGiftCashSimpleWithdrawSum"
+        url4 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryYebWithdrawMoney"
+
+        # 构造请求体数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+
+        data2 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "5"
+        }
+
+        data3 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "7"
+        }
+
+        data4 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "9"
+        }
+
+        data5 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "11"
+        }
+
+        data6 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "13"
+        }
+
+        data7 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "15"
+        }
+
+        data8 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "17"
+        }
+
+        data9 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "19"
+        }
+
+        data10 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "21"
+        }
+
+        data11 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "23"
+        }
+
+        data12 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "1"
+        }
+
+        data13 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+
+        # 发送第一个请求
+        response1 = send_request(url1, data)
+        response2 = send_request(url2, data2)
+        response3 = send_request(url2, data3)
+        response4 = send_request(url2, data4)
+        response5 = send_request(url2, data5)
+        response6 = send_request(url2, data6)
+        response7 = send_request(url2, data7)
+        response8 = send_request(url2, data8)
+        response9 = send_request(url2, data9)
+        response10 = send_request(url2, data10)
+        response11 = send_request(url2, data11)
+        response12 = send_request(url2, data12)
+        response13 = send_request(url3, data13)
+        response14 = send_request(url4, data)
+
+        # 初始化变量用于存储总和
+        出款人数 = 0
+
+        # 遍历 response1 到 response13，累加相应的值  所有出款的总和
+        for response in [response1, response2, response3, response4, response5, response6, response7, response8,
+                         response9, response10, response11, response12, response13]:
+            if response is not None:
+                # 累加特定字段的值
+                出款人数 += response.get('userCount', 0) + response.get('simpleGiverSumGiftCount', 0)
+
+        # 输出总和
+        print("出款人数:", 出款人数)
+
+        # 初始化变量用于存储总和
+        出款金额 = 0
+
+        # 遍历 response1 到 response13，累加相应的值  所有出款的总和
+        for response in [response1, response2, response3, response4, response5, response6, response7, response8,
+                         response9, response10, response11, response12, response13]:
+            if response is not None:
+                # 累加特定字段的值
+                出款金额 += response.get('simpleGiverSumGiftAmount', 0) + response.get('sumRealAmount', 0)
+
+        # 输出总和
+        print("出款金额:", 出款金额)
+
+        # 格式化日期为字符串
+        start_date = current_date.strftime("%Y-%m-%d 00:00:00")
+        end_date = current_date.strftime("%Y-%m-%d 23:59:59")
+
+        # 定义请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+
+        # 定义开始时间和结束时间
+        start_date = start_date
+        end_date = end_date
+
+        # 构建两个不同的 URL
+        url = f"http://back.{port}.com/back/back/sscPayFirst/sscPayFirstList?limit=20&offset=0&startDate={start_date}&endDate={end_date}&regstartDate=&regendDate=&userName=&parentUsername=&_=1712780228218"
+
+        # 发送 GET 请求
+        response = requests.get(url, headers=headers)
+
+        # 检查响应状态码
+        if response.status_code == 200:
+            # 响应内容解析为 JSON 格式
+            response_data = response.json()
+
+        # 初始化变量来存储总和
+        新增金额 = 0
+
+        # 遍历每个条目并累加 'betCount_own' 和 'awardCount_own' 字段
+        for item in response_data['rows']:
+            新增金额 += item['amount']
+
+        # 打印结果
+        print("新增金额:", 新增金额)
+        留存金额 = 总存款 - 新增金额
+        留存人数 = 充值人数 - 新增人数
+        print("留存金额:", 留存金额)
+        print("留存人数:", 留存人数)
+
+        ################################################充值金额
+
+        # 定义请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+
+        # 定义发送请求的函数
+        def send_request(url, data):
+            # 发送 POST 请求
+            response = requests.post(url, headers=headers, data=data)
+            # 检查响应状态码
+            if response.status_code == 200:
+                # 解析响应数据为 JSON 格式
+                response_data = response.json()
+                return response_data
+            else:
+                print("请求失败，状态码：", response.status_code)
+                return None
+
+        # 设置请求的 URL
+        url = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryAllOnLineData"
+
+        # 构造请求体数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+
+        # 发送请求
+        response = requests.post(url, headers=headers, data=data)
+
+        # 检查响应状态码
+        if response.status_code == 200:
+            # 解析响应数据为 JSON 格式
+            response_data = response.json()
+            # 遍历响应数据列表
+            for item in response_data:
+                if item["channel_name"] == "微信支付":
+                    微信支付 = item.get("sumRealAmount", None)
+                    if 微信支付 is not None:
+                        print(item["channel_name"] + ":", 微信支付)
+                    else:
+                        print("微信支付", 0)
+                        # 检查微信支付是否为None，如果是，则设为0
+                        if 微信支付 is None:
+                            微信支付 = 0.0
+
+            for item in response_data:
+                if item["channel_name"] == "支付宝支付":
+                    支付宝支付 = item.get("sumRealAmount", None)
+                    if 支付宝支付 is not None:
+                        print(item["channel_name"] + ":", 支付宝支付)
+                    else:
+                        print("支付宝支付", 0)
+                        if 支付宝支付 is None:
+                            支付宝支付 = 0.0
+
+            for item in response_data:
+                if item["channel_name"] == "网银支付":
+                    网银支付 = item.get("sumRealAmount", None)
+                    if 网银支付 is not None:
+                        print(item["channel_name"] + ":", 网银支付)
+                    else:
+                        print("网银支付", 0)
+                        # 检查网银支付是否为None，如果是，则设为0
+                        if 网银支付 is None:
+                            网银支付 = 0.0
+
+        # 计算三方支付总额
+        充值金额三方 = 微信支付 + 支付宝支付 + 网银支付
+        print("充值金额三方:", 充值金额三方)
+
+        # 定义请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+
+        # 定义发送请求的函数
+        def send_request(url, data):
+            # 发送 POST 请求
+            response = requests.post(url, headers=headers, data=data)
+            # 检查响应状态码
+            if response.status_code == 200:
+                # 解析响应数据为 JSON 格式
+                response_data = response.json()
+                return response_data
+            else:
+                print("请求失败，状态码：", response.status_code)
+                return None
+
+        # 设置请求的 URL
+        url1 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryAllOnLineData"
+
+        # 设置请求的数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+        # 发送第一个请求
+        response1 = send_request(url1, data)
+        # 计算入款金额
+        三方和钱包总和 = sum(item.get('sumRealAmount', 0) for item in response1)
+        # print("三方和钱包总和:",三方和钱包总和)
+
+        钱包总和 = 三方和钱包总和 - 充值金额三方
+        print("钱包总和:", 钱包总和)
+
+        # 格式化日期为字符串
+        date = current_date.strftime("%Y-%m-%d")
+
+        # 定义请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+
+        # 设置请求的 URL
+        url = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryAllUnderLineData"
+
+        # 构造请求体数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+
+        # 发送请求
+        response = requests.post(url, headers=headers, data=data)
+
+        # 检查响应状态码
+        if response.status_code == 200:
+            # 解析响应数据为 JSON 格式
+            response_data = response.json()
+            # 遍历响应数据列表
+            for item in response_data:
+                # 如果找到银行卡转账的渠道
+                if item["channel_name"] == "银行卡转账":
+                    # 获取 sumRealAmount 的值
+                    充值金额银行卡 = item.get("sumRealAmount", None)
+                    if 充值金额银行卡 is not None:
+                        print("充值金额银行卡:", 充值金额银行卡)
+                    else:
+                        print("充值金额银行卡:", 0)
+                    break
+        else:
+            print("请求失败，状态码：", response.status_code)
+
+        # 寻找'数字货币'和'GP币'的渠道，并获取它们的 sumRealAmount 值
+        for item in response_data:
+            if item["channel_name"] == "数字货币":
+                充值金额数字 = item.get("sumRealAmount", None)
+                if 充值金额数字 is not None:
+                    print(item["channel_name"] + ":", 充值金额数字)
+                else:
+                    print("充值金额数字:", 0)
+
+        for item in response_data:
+            if item["channel_name"] == "GP币":
+                充值金额GP币 = item.get("sumRealAmount", None)
+                if 充值金额GP币 is not None:
+                    print(item["channel_name"] + ":", 充值金额GP币)
+                else:
+                    print("GP币:", 0)
+
+        if 充值金额GP币 is not None:
+            充值金额虚拟币 = 钱包总和 + 充值金额GP币
+            print("充值金额虚拟币:", 充值金额虚拟币)
+        else:
+            充值金额虚拟币 = 钱包总和
+            print("充值金额虚拟币:", 充值金额虚拟币)
+
+        # 格式化日期为字符串
+        date = current_date.strftime("%Y-%m-%d")
+
+        # 定义请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+
+        # 定义发送请求的函数
+        def send_request(url, data):
+            # 发送 POST 请求
+            response = requests.post(url, headers=headers, data=data)
+            # 检查响应状态码
+            if response.status_code == 200:
+                # 解析响应数据为 JSON 格式
+                response_data = response.json()
+                return response_data
+            else:
+                print("请求失败，状态码：", response.status_code)
+                return None
+
+        # 设置请求的 URL
+        url4 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryYebRecharge"
+
+        # 设置请求的数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+
+        response4 = send_request(url4, data)
+
+        # 计算现金入款
+        余额宝入款 = abs(response4.get('sumRealAmount', 0))
+        print("余额宝入款:", 余额宝入款)
+
+        ##########################################################充值人数
+
+        # 格式化日期为字符串
+        date = current_date.strftime("%Y-%m-%d")
+
+        # 定义请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+
+        # 定义发送请求的函数
+        def send_request(url, data):
+            # 发送 POST 请求
+            response = requests.post(url, headers=headers, data=data)
+            # 检查响应状态码
+            if response.status_code == 200:
+                # 解析响应数据为 JSON 格式
+                response_data = response.json()
+                return response_data
+            else:
+                print("请求失败，状态码：", response.status_code)
+                return None
+
+        # 设置请求的 URL
+        url = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryAllOnLineData"
+
+        # 构造请求体数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+
+        # 发送请求
+        response = requests.post(url, headers=headers, data=data)
+
+        # 检查响应状态码
+        if response.status_code == 200:
+            # 解析响应数据为 JSON 格式
+            response_data = response.json()
+            # 遍历响应数据列表
+            for item in response_data:
+                if item["channel_name"] == "微信支付":
+                    微信支付充值人数 = item.get("userCount", None)
+                    if 微信支付充值人数 is not None:
+                        print(item["channel_name"] + ":", 微信支付充值人数)
+                    else:
+                        print("未找到" + item["channel_name"] + "渠道的 userCount 值")
+                        if 微信支付充值人数 is None:
+                            微信支付充值人数 = 0.0
+
+            for item in response_data:
+                if item["channel_name"] == "支付宝支付":
+                    支付宝支付充值人数 = item.get("userCount", None)
+                    if 支付宝支付充值人数 is not None:
+                        print(item["channel_name"] + ":", 支付宝支付充值人数)
+                    else:
+                        print("未找到" + item["channel_name"] + "渠道的 sumRealAmount 值")
+                        if 支付宝支付充值人数 is None:
+                            支付宝支付充值人数 = 0.0
+
+            for item in response_data:
+                if item["channel_name"] == "网银支付":
+                    网银支付充值人数 = item.get("userCount", None)
+                    if 网银支付充值人数 is not None:
+                        print(item["channel_name"] + ":", 网银支付充值人数)
+                    else:
+                        print("网银支付", 0)
+                        # 检查网银支付是否为None，如果是，则设为0
+                        if 网银支付充值人数 is None:
+                            网银支付充值人数 = 0.0
+
+        # 计算三方支付总额
+        充值人数三方 = 微信支付充值人数 + 支付宝支付充值人数 + 网银支付充值人数
+        print("充值人数三方:", 充值人数三方)
+
+        # 格式化日期为字符串
+        date = current_date.strftime("%Y-%m-%d")
+
+        # 定义请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+
+        # 定义发送请求的函数
+        def send_request(url, data):
+            # 发送 POST 请求
+            response = requests.post(url, headers=headers, data=data)
+            # 检查响应状态码
+            if response.status_code == 200:
+                # 解析响应数据为 JSON 格式
+                response_data = response.json()
+                return response_data
+            else:
+                print("请求失败，状态码：", response.status_code)
+                return None
+
+        # 设置请求的 URL
+        url1 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryAllOnLineData"
+
+        # 设置请求的数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+
+        # 发送第一个请求
+        response1 = send_request(url1, data)
+
+        # 计算入款金额
+        三方人数和钱包人数总和 = sum(item.get('userCount', 0) for item in response1)
+        print("三方人数和钱包人数总和:", 三方人数和钱包人数总和)
+        钱包人数总和 = 三方人数和钱包人数总和 - 充值人数三方
+        print("钱包人数总和:", 钱包人数总和)
+
+        # 格式化日期为字符串
+        date = current_date.strftime("%Y-%m-%d")
+
+        # 定义请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+
+        # 设置请求的 URL
+        url = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryAllUnderLineData"
+
+        # 构造请求体数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+
+        # 发送请求
+        response = requests.post(url, headers=headers, data=data)
+
+        # 检查响应状态码
+        if response.status_code == 200:
+            # 解析响应数据为 JSON 格式
+            response_data = response.json()
+            # 遍历响应数据列表
+            for item in response_data:
+                # 如果找到银行卡转账的渠道
+                if item["channel_name"] == "银行卡转账":
+                    # 获取 sumRealAmount 的值
+                    充值人数银行卡 = item.get("userCount", None)
+                    if 充值人数银行卡 is not None:
+                        print("充值人数银行卡:", 充值人数银行卡)
+                    else:
+                        print("银行卡:", 0)
+
+        # 寻找'数字货币'和'GP币'的渠道，并获取它们的 sumRealAmount 值
+        for item in response_data:
+            if item["channel_name"] == "数字货币":
+                充值人数数字 = item.get("userCount", None)
+                if 充值人数数字 is not None:
+                    print(item["channel_name"] + ":", 充值人数数字)
+                else:
+                    print("数字货币:", 0)
+
+        for item in response_data:
+            if item["channel_name"] == "GP币":
+                充值人数GP币 = item.get("userCount", None)
+                if 充值人数GP币 is not None:
+                    print(item["channel_name"] + ":", 充值人数GP币)
+                else:
+                    print("GP币:", 0)
+
+        充值人数虚拟币 = 钱包人数总和 + 充值人数GP币
+        print("充值人数虚拟币:", 充值人数虚拟币)
+
+        # 格式化日期为字符串
+        date = current_date.strftime("%Y-%m-%d")
+
+        # 定义请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+
+        # 定义发送请求的函数
+        def send_request(url, data):
+            # 发送 POST 请求
+            response = requests.post(url, headers=headers, data=data)
+            # 检查响应状态码
+            if response.status_code == 200:
+                # 解析响应数据为 JSON 格式
+                response_data = response.json()
+                return response_data
+            else:
+                print("请求失败，状态码：", response.status_code)
+                return None
+
+        # 设置请求的 URL
+        url4 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryYebRecharge"
+
+        # 设置请求的数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+
+        response4 = send_request(url4, data)
+
+        # 计算现金入款
+        余额宝入款人数 = abs(response4.get('userCount', 0))
+        print("余额宝入款人数:", 余额宝入款人数)
+
+        ###########################################出款金额和出款人数
+
+        # 定义一个函数来发送请求
+        def send_request(url, data):
+            # 设置请求头
+            headers = {
+                "Accept": "*/*",
+                "Accept-Encoding": "gzip, deflate",
+                "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+                "Connection": "keep-alive",
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "cookie": cookie,
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+            }
+
+            # 发送 POST 请求并获取响应
+            response = requests.post(url, headers=headers, data=data)
+
+            # 解析响应数据
+            if response.status_code == 200:
+                return response.json()
+            else:
+                return None
+
+        # 设置请求的 URL
+        url1 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryYebWithdraw"  # 余额宝出款金额
+        url2 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryWithDraw"
+        url3 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryGiftCashSimpleWithdrawSum"  # 红包派发
+        url4 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryYebWithdrawMoney"  # 余额宝现金出款
+
+        # 构造请求体数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+
+        data2 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "5"
+        }
+
+        data3 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "7"
+        }
+
+        data4 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "9"
+        }
+
+        data5 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "11"
+        }
+
+        data6 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "13"
+        }
+
+        data7 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "15"
+        }
+
+        data8 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "17"
+        }
+
+        data9 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "19"
+        }
+
+        data10 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "21"
+        }
+
+        data11 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "23"
+        }
+
+        data12 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "1"
+        }
+
+        data13 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+
+        # 发送第一个请求
+        response1 = send_request(url1, data)  # 余额宝出款金额
+        response2 = send_request(url2, data2)
+        response3 = send_request(url2, data3)
+        response4 = send_request(url2, data4)
+        response5 = send_request(url2, data5)
+        response6 = send_request(url2, data6)
+        response7 = send_request(url2, data7)
+        response8 = send_request(url2, data8)
+        response9 = send_request(url2, data9)
+        response10 = send_request(url2, data10)
+        response11 = send_request(url2, data11)
+        response12 = send_request(url2, data12)  # 提现金额 银行卡
+        response13 = send_request(url3, data13)  # 红包派发
+        response14 = send_request(url4, data)  # 余额宝现金出款
+
+        # 初始化变量用于存储总和
+        出款金虚拟币 = 0
+
+        # 遍历 response2 到 response11，累加相应的值
+        for response in [response2, response3, response4, response5, response6, response7, response8, response9,
+                         response10, response11]:
+            if response is not None:
+                # 累加特定字段的值
+                出款金虚拟币 += response.get('simpleGiverSumGiftAmount', 0) + response.get('sumRealAmount', 0)
+
+        # 输出总和
+        print("出款金额虚拟币:", 出款金虚拟币)
+
+        # 初始化变量用于存储总和
+        total_amount1 = 0
+
+        # 遍历 response14累加相应的值
+        for response in [response14]:
+            if response is not None:
+                # 累加特定字段的值
+                total_amount1 += response.get('sumRealAmount', 0)
+
+        # 输出总和
+        # rint("余额宝现金出款:", total_amount1)
+
+        # 初始化变量用于存储总和
+        出款金额余额宝 = 0
+
+        # 遍历 response1累加相应的值
+        for response in [response1]:
+            if response is not None:
+                # 累加特定字段的值
+                出款金额余额宝 += response.get('sumRealAmount', 0)
+
+        # 输出总和
+        print("出款金额余额宝:", 出款金额余额宝)
+
+        # 初始化变量用于存储总和
+        出款金额银行卡 = 0
+
+        # 遍历response12，累加相应的值
+        for response in [response12]:
+            if response is not None:
+                # 累加特定字段的值
+                出款金额银行卡 += response.get('sumRealAmount', 0)
+
+        print("出款金额银行卡:", 出款金额银行卡)
+
+        ###################################################
+        # 初始化变量用于存储总和
+        提款人虚拟币 = 0
+
+        # 遍历 response2 到 response11，累加相应的值
+        for response in [response2, response3, response4, response5, response6, response7, response8, response9,
+                         response10, response11]:
+            if response is not None:
+                # 累加特定字段的值
+                提款人虚拟币 += response.get('simpleGiverSumGiftAmount', 0) + response.get('userCount', 0)
+
+        # 输出总和
+        print("提款人虚拟币:", 提款人虚拟币)
+
+        # 初始化变量用于存储总和
+        total_amount1 = 0
+
+        # 遍历 response14累加相应的值
+        for response in [response14]:
+            if response is not None:
+                # 累加特定字段的值
+                total_amount1 += response.get('userCount', 0)
+
+        # 输出总和
+        # print("提款人数余额宝现金出款:", total_amount1)
+
+        # 初始化变量用于存储总和
+        提款人数余额宝 = 0
+
+        # 遍历 response1累加相应的值
+        for response in [response1]:
+            if response is not None:
+                # 累加特定字段的值
+                提款人数余额宝 += response.get('userCount', 0)
+
+        # 输出总和
+        print("提款人数余额宝:", 提款人数余额宝)
+
+        # 初始化变量用于存储总和
+        提款人数银行卡 = 0
+
+        # 遍历response12，累加相应的值
+        for response in [response12]:
+            if response is not None:
+                # 累加特定字段的值
+                提款人数银行卡 += response.get('userCount', 0)
+
+        print("提款人数银行卡:", 提款人数银行卡)
+
+        ############################################打码量和盈利
+        # 定义一个函数来发送请求
+        def send_request(url, data):
+            # 设置请求头
+            headers = {
+                "Accept": "*/*",
+                "Accept-Encoding": "gzip, deflate",
+                "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+                "Connection": "keep-alive",
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "cookie": cookie,
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+            }
+
+            # 发送 POST 请求并获取响应
+
+            try:
+                response = requests.post(url, headers=headers, data=data)
+                response.raise_for_status()  # 如果请求不成功，会抛出异常
+                return response.json()  # 尝试解析JSON数据
+            except RequestException as e:
+                print(f"An error occurred: {e}")
+                return None
+
+        # 设置请求的 URL
+        url1 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryRebateAmount"
+        url2 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryGiftCashSysWithdrawSum"
+        url3 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryArtificial"
+        url4 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryUnderLineActivity"
+        url5 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryThirdActivity"
+        url6 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryForthActivity"
+        url7 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryRecordAmount"
+        url8 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryRecordAmount"
+        url9 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryLotteryActivity"
+        url10 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryLotteryActivity"
+        url11 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryYbInterestRecord"
+
+        # 构造请求体数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "1",
+            "rechargeType": "15"
+        }
+        data1 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "4",
+            "rebateType": "7",
+        }
+        data2 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "3",
+        }
+        data3 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "rebateType": "4",
+        }
+
+        data4 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "1",
+        }
+
+        data5 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "rebateType": "6",
+        }
+
+        # 发送第一个请求
+        response1 = send_request(url1, data)
+        response2 = send_request(url2, data)
+        response3 = send_request(url3, data)
+        response4 = send_request(url4, data)
+        response5 = send_request(url5, data)
+        response6 = send_request(url6, data)
+        response7 = send_request(url7, data2)
+        response8 = send_request(url8, data1)
+        response9 = send_request(url9, data3)
+        response10 = send_request(url10, data1)
+        response11 = send_request(url11, data)
+        response12 = send_request(url7, data4)
+        response13 = send_request(url9, data5)
+
+        # 解析第一个响应数据
+        if response1 is not None:
+            彩票投注减中奖 = response1['sumBetsAmount'] - response1['sumAwardAmount']  # 投注金额-中奖金额
+            # print("彩票投注减中奖:", 彩票投注减中奖)
+        else:
+            print("无法获取数据.")
+
+        # 解析第一个响应数据
+        if response1 is not None:
+            彩票打码 = response1['sumBetsAmount']
+            print("彩票打码:", 彩票打码)
+        else:
+            print("无法获取数据.")
+
+        # 解析第一个响应数据
+        if response1 is not None:
+            中奖金额 = response1['sumAwardAmount']
+            # print("中奖金额:", 中奖金额)
+        else:
+            print("无法获取数据.")
+
+        if response1 is not None:
+            返点总额 = response1['sumRebateAmount']
+            # print("返点总额:", 返点总额)
+        else:
+            print("无法获取数据.")
+
+        # 初始化变量用于存储总和
+        活动礼金 = 0  # 当月活动礼金总和
+
+        # 遍历 response2 到 response11，累加相应的值
+        for response in [response2, response3, response4, response5, response6, response7, response8, response9,
+                         response10, response11, response12, response13]:
+            if response is not None:
+                活动礼金 += response.get('cusSumGiftAmount', 0) + response.get('sumRealAmount', 0)  # 活动礼金总和
+
+        # print("活动礼金:", 活动礼金)
+
+        # 盈利 = 投注金额 - 中奖金额 - 活动礼金 - 返点 + 行政提出
+        彩票盈利 = 彩票投注减中奖 - 活动礼金 - 返点总额
+        # 打印结果
+        print("彩票盈利:", 彩票盈利)
+
+        def get_total_profit(url):
+            # 定义请求头
+            headers = {
+                "Accept": "*/*",
+                "Accept-Encoding": "gzip, deflate",
+                "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+                "Connection": "keep-alive",
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "cookie": cookie,
+                "Origin": f"http://back.{port}.com",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+            }
+
+            # 发送 GET 请求
+            response = requests.get(url, headers=headers)
+
+            # 检查响应状态码
+            if response.status_code == 200:
+                # 解析 JSON 数据
+                json_response = response.json()
+                # 获取 'rows' 列表
+                rows = json_response.get('rows', [])
+                # 初始化总盈利
+                total_recharge_coin = 0
+                # 计算总盈利
+                for row in rows:
+                    # 计算每个键的值并相加
+                    total_recharge_coin += row.get('betsAmount', 0) + row.get('sumBet', 0) + row.get('sendAmount',
+                                                                                                     0) + row.get(
+                        'betCount_own', 0)
+                return total_recharge_coin
+            else:
+                # 请求失败时打印错误信息
+                print("Failed to retrieve data. Status code:", response.status_code)
+                return None
+
+        # 定义开始时间和结束时间
+        start_date = date
+        end_date = date
+
+        # 构建两个不同的 URL
+        url2 = f"http://back.{port}.com/back/cards/openCardsAgentReport/openCardsAgentReportList?limit=20&offset=0&parentId=0&startDate={start_date}&endDate={end_date}&options=1&username=&_=1711593363129"
+        url3 = f"http://back.{port}.com/back/cards/jdbAgentReport/jdbAgentReportList?limit=20&offset=0&parentId=0&startDate={start_date}&endDate={end_date}&options=1&username=&choice=beijingDate&_=1711593366450"
+        url4 = f"http://back.{port}.com/back/cards/agDataReportDay/agentReportList?parentId=0&startDate={start_date}&endDate={end_date}&options=1&username=&flag=&severalTimes=&_=1711593367056"
+
+        # 获取棋牌当月总盈利
+        开元打码 = get_total_profit(url2)
+        jdb打码 = get_total_profit(url3)
+        ag打码 = get_total_profit(url4)
+        # 打印结果
+        if 开元打码 is not None:
+            print("开元打码:", 开元打码)
+        if jdb打码 is not None:
+            print("jdb打码:", jdb打码)
+        if ag打码 is not None:
+            print("ag打码:", ag打码)
+
+        # 定义请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "Origin": f"http://back.{port}.com",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+        # 定义开始时间和结束时间
+        start_date = date
+        end_date = date
+        # 红包游戏统计报表
+        url = f'http://back.{port}.com/back/back/sscCustomerRedRoomReport/redGiftGameReportList?option=1&startTime={start_date}&endTime={end_date}'
+        # 发送 GET 请求
+        response = requests.get(url, headers=headers)
+        # 检查响应状态码
+        if response.status_code == 200:
+            # 响应内容解析为 JSON 格式
+            response_data = response.json()
+            红包打码2 = response_data.get('sendAmount')
+            print('红包打码:', 红包打码2)
+            红包盈利2 = response_data.get('profitAmount')
+            # print('红包盈利2:',abs(红包盈利2) if 红包盈利2 < 0 else "-" + str(红包盈利2))
+            红包盈利3 = abs(红包盈利2) if 红包盈利2 < 0 else "-" + str(红包盈利2)
+            # print('红包盈利3:', 红包盈利3)
+
+        def get_total_profit(url):
+            # 定义请求头
+            headers = {
+                "Accept": "*/*",
+                "Accept-Encoding": "gzip, deflate",
+                "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+                "Connection": "keep-alive",
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "cookie": cookie,
+                "Origin": f"http://back.{port}.com",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+            }
+
+            # 发送 GET 请求
+            response = requests.get(url, headers=headers)
+
+            # 检查响应状态码
+            if response.status_code == 200:
+                # 解析 JSON 数据
+                json_response = response.json()
+                # 获取 'rows' 列表
+                rows = json_response.get('rows', [])
+                # 初始化总盈利
+                total_recharge_coin = 0
+                # 计算总盈利
+                for row in rows:
+                    # 计算每个键的值并相加
+                    total_recharge_coin += row.get('winAmount', 0) + row.get('sumTotal', 0) + row.get('profitAmount', 0)
+                return total_recharge_coin
+            else:
+                # 请求失败时打印错误信息
+                print("Failed to retrieve data. Status code:", response.status_code)
+                return None
+
+        # 定义开始时间和结束时间
+        start_date = date
+        end_date = date
+
+        # 构建两个不同的 URL
+        url2 = f"http://back.{port}.com/back/cards/openCardsAgentReport/openCardsAgentReportList?limit=20&offset=0&parentId=0&startDate={start_date}&endDate={end_date}&options=1&username=&_=1711593363129"
+        url3 = f"http://back.{port}.com/back/cards/jdbAgentReport/jdbAgentReportList?limit=20&offset=0&parentId=0&startDate={start_date}&endDate={end_date}&options=1&username=&choice=beijingDate&_=1711593366450"
+        url4 = f"http://back.{port}.com/back/cards/agDataReportDay/agentReportList?parentId=0&startDate={start_date}&endDate={end_date}&options=1&username=&flag=&severalTimes=&_=1711593367056"
+
+        # 获取当月总盈利
+        开元盈利2 = get_total_profit(url2)
+        jdb盈利2 = get_total_profit(url3)
+        ag盈利2 = get_total_profit(url4)
+
+        红包盈利 = abs(红包盈利2) if 红包盈利2 < 0 else "-" + str(红包盈利2)
+        开元盈利 = abs(开元盈利2) if 开元盈利2 < 0 else "-" + str(开元盈利2)
+        JDB捕鱼盈利 = abs(jdb盈利2) if jdb盈利2 < 0 else "-" + str(jdb盈利2)
+        AG捕鱼盈利 = abs(ag盈利2) if ag盈利2 < 0 else "-" + str(ag盈利2)
+
+        # 定义请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "Origin": f"http://back.{port}.com",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+        # 定义开始时间和结束时间
+        start_date = date
+        end_date = date
+        # 棋牌运营报表
+        url = f'http://back.{port}.com/back/cards/cardsDataReport/sumAmount?options=1&startTime={start_date}&endTime={end_date}'
+        # 发送 GET 请求
+        response = requests.get(url, headers=headers)
+        # 检查响应状态码
+        if response.status_code == 200:
+            # 响应内容解析为 JSON 格式
+            response_data = response.json()
+            棋牌打码2 = response_data.get('sumBetAmount')
+            print('棋牌打码2:', 棋牌打码2)
+            棋牌盈利2 = response_data.get('sumWinAmount')
+            print('棋牌盈利2:', 棋牌盈利2)
+
+        红包盈利1 = float(红包盈利3)  # 将字符串转换为浮点数
+        print('红包盈利1', 红包盈利1)
+        开元盈利1 = float(开元盈利)  # 将字符串转换为浮点数
+        print('开元盈利', 开元盈利)
+        JDB捕鱼盈利1 = float(JDB捕鱼盈利)  # 将字符串转换为浮点数
+        print('JDB捕鱼盈利', JDB捕鱼盈利1)
+        AG捕鱼盈利1 = float(AG捕鱼盈利)  # 将字符串转换为浮点数
+        print('AG捕鱼盈利', AG捕鱼盈利1)
+
+        总打码 = 彩票打码 + 棋牌打码2 + 开元打码 + jdb打码 + ag打码 + 红包打码2
+        print('打码相加总和:', 总打码)
+
+        总盈亏金额 = 彩票盈利 + 棋牌盈利2 + 红包盈利1 + 开元盈利1 + JDB捕鱼盈利1 + AG捕鱼盈利1
+        print('盈利相加总和:', 总盈亏金额)
+
+        # 打开现有的 Excel 表格
+        workbook = load_workbook('A02每小时数据.xlsx')
+
+        # 选择要写入数据的工作表
+        sheet = workbook.active
+
+        # 按照指定的行和列写入数据
+        sheet['B4'] = 在线人数
+        sheet['C4'] = 注册会员
+        sheet['D4'] = 充值人数
+        sheet['E4'] = 出款人数
+        sheet['F4'] = 投注会员
+        sheet['G4'] = 总存款
+        sheet['H4'] = 出款金额
+        sheet['I4'] = 留存金额
+        sheet['J4'] = 留存人数
+        sheet['K4'] = 新增金额
+        sheet['L4'] = 新增人数
+        sheet['M4'] = 充值金额银行卡 if 充值金额银行卡 is not None else 0
+        sheet['N4'] = 充值金额三方
+        sheet['O4'] = 充值金额数字 if 充值金额数字 is not None else 0
+        sheet['P4'] = 余额宝入款
+        sheet['Q4'] = 充值金额虚拟币
+        sheet['R4'] = 出款金额银行卡
+        sheet['S4'] = 出款金虚拟币
+        sheet['T4'] = 出款金额余额宝
+        sheet['U4'] = 充值人数银行卡
+        sheet['V4'] = 充值人数三方
+        sheet['W4'] = 充值人数数字
+        sheet['X4'] = 余额宝入款人数
+        sheet['Y4'] = 充值人数虚拟币
+        sheet['Z4'] = 提款人数银行卡
+        sheet['AA4'] = 提款人虚拟币
+        sheet['AB4'] = 提款人数余额宝
+        sheet['AI4'] = 总打码
+        sheet['AL4'] = 总盈亏金额
+
+        # 保存修改并关闭 Excel 文件
+        workbook.save('A02每小时数据.xlsx')
+
+        # 使用系统默认的程序打开 Excel 文件
+        os.startfile('A02每小时数据.xlsx')
+
+    except Exception as e:
+        messagebox.showerror("错误", str(e))
+
+
+def run_script_yesterday():  # 昨天数据
+    try:
+        port = entry_port.get()
+        cookie = entry_password.get()
+
+        current_date = datetime.now()
+        zt = current_date - timedelta(days=1)
+        date = zt.strftime("%Y-%m-%d")
+        print(date)
+
+        # 设置请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+
+        url = f"http://back.{port}.com/back/back/sscDataReport/queryOnlineUsers"
+
+        在线人数 = requests.post(url, headers=headers).text  # 提取在线人数并转换为字符串
+        print("在线人数:", 在线人数)
+
+        # 定义一个函数来发送请求
+        def send_request(url, data):
+            # 设置请求头
+            headers = {
+                "Accept": "*/*",
+                "Accept-Encoding": "gzip, deflate",
+                "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+                "Connection": "keep-alive",
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "cookie": cookie,
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+            }
+
+            # 发送 POST 请求并获取响应
+            response = requests.post(url, headers=headers, data=data)
+
+            # 解析响应数据
+            if response.status_code == 200:
+                return response.json()
+            else:
+                return None
+
+        # 设置请求的 URL
+        url1 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryBetsUsersTotalNum"
+        url2 = f"http://back.{port}.com/back/back/sscDataReport/thedayPayUsers"
+        url3 = f"http://back.{port}.com/back/back/sscDataReport/queryRefillPerson"
+        url4 = f"http://back.{port}.com/back/back/sscDataReport/queryRegRate"
+
+        # 构造请求体数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date
+        }
+
+        # 发送第一个请求
+        response1 = send_request(url1, data)
+        response2 = send_request(url2, data)
+        response3 = send_request(url3, data)
+        response4 = send_request(url4, data)
+        注册会员 = response4.get('regPsersonData')
+        print("注册会员", 注册会员)
+        充值人数 = response2.get('totalRecharge')
+        print("充值人数", 充值人数)
+        投注会员 = response1.get('betsPersonNum')
+        print("投注会员", 投注会员)
+        新增人数 = response3.get('refillPersonData')
+        print("新增人数", 新增人数)
+
+        # 定义请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+
+        # 定义发送请求的函数
+        def send_request(url, data):
+            # 发送 POST 请求
+            response = requests.post(url, headers=headers, data=data)
+            # 检查响应状态码
+            if response.status_code == 200:
+                # 解析响应数据为 JSON 格式
+                response_data = response.json()
+                return response_data
+            else:
+                print("请求失败，状态码：", response.status_code)
+                return None
+
+        # 设置请求的 URL
+        url1 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryAllOnLineData"
+        url2 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryAllUnderLineData"
+        url4 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryYebRecharge"
+        url5 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryGiftCashRecharge"
+
+        # 设置请求的数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+
+        # 发送第一个请求
+        response1 = send_request(url1, data)
+
+        # 发送第二个请求
+        response2 = send_request(url2, data)
+
+        # 发送第四个请求
+        response5 = send_request(url5, data)
+
+        # 发送第四个请求
+        response4 = send_request(url4, data)
+
+        # 设置人工入款请求的 URL 和数据
+        url = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryArtificial"
+
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "1",
+            "rechargeType": "14"
+        }
+
+        # 发送人工入款请求
+        response = requests.post(url, headers=headers, data=data)
+
+        if response.status_code == 200:
+            try:
+                response_data = response.json()
+                rgck = response_data.get('sumRealAmount')
+
+                if rgck is not None:
+                    print("未找到总充值金额字段！")
+            except ValueError:
+                rgck = 0
+
+        # 计算入款金额
+        total_sum1 = sum(item.get('sumRealAmount', 0) for item in response1) + sum(
+            item.get('sumRealAmount', 0) for item in response2) + response5.get('simpleTakeSumGiftAmount', 0) + abs(
+            response4.get('sumRealAmount', 0))
+
+        # 计算现金入款
+        total_sum0 = response5.get('simpleTakeSumGiftAmount', 0) + abs(response4.get('sumRealAmount', 0))
+
+        # 计算总入款金额（包括人工入款）
+        总存款 = total_sum1 + rgck
+
+        # 打印总入款金额
+        print("总存款:", 总存款)
+
+        # 定义一个函数来发送请求
+        def send_request(url, data):
+            # 设置请求头
+            headers = {
+                "Accept": "*/*",
+                "Accept-Encoding": "gzip, deflate",
+                "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+                "Connection": "keep-alive",
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "cookie": cookie,
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+            }
+
+            # 发送 POST 请求并获取响应
+            response = requests.post(url, headers=headers, data=data)
+
+            # 解析响应数据
+            if response.status_code == 200:
+                return response.json()
+            else:
+                return None
+
+        # 设置请求的 URL
+        url1 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryYebWithdraw"
+        url2 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryWithDraw"
+        url3 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryGiftCashSimpleWithdrawSum"
+        url4 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryYebWithdrawMoney"
+
+        # 构造请求体数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+
+        data2 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "5"
+        }
+
+        data3 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "7"
+        }
+
+        data4 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "9"
+        }
+
+        data5 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "11"
+        }
+
+        data6 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "13"
+        }
+
+        data7 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "15"
+        }
+
+        data8 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "17"
+        }
+
+        data9 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "19"
+        }
+
+        data10 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "21"
+        }
+
+        data11 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "23"
+        }
+
+        data12 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "1"
+        }
+
+        data13 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+
+        # 发送第一个请求
+        response1 = send_request(url1, data)
+        response2 = send_request(url2, data2)
+        response3 = send_request(url2, data3)
+        response4 = send_request(url2, data4)
+        response5 = send_request(url2, data5)
+        response6 = send_request(url2, data6)
+        response7 = send_request(url2, data7)
+        response8 = send_request(url2, data8)
+        response9 = send_request(url2, data9)
+        response10 = send_request(url2, data10)
+        response11 = send_request(url2, data11)
+        response12 = send_request(url2, data12)
+        response13 = send_request(url3, data13)
+        response14 = send_request(url4, data)
+
+        # 初始化变量用于存储总和
+        出款人数 = 0
+
+        # 遍历 response1 到 response13，累加相应的值  所有出款的总和
+        for response in [response1, response2, response3, response4, response5, response6, response7, response8,
+                         response9, response10, response11, response12, response13]:
+            if response is not None:
+                # 累加特定字段的值
+                出款人数 += response.get('userCount', 0) + response.get('simpleGiverSumGiftCount', 0)
+
+        # 输出总和
+        print("出款人数:", 出款人数)
+
+        # 初始化变量用于存储总和
+        出款金额 = 0
+
+        # 遍历 response1 到 response13，累加相应的值  所有出款的总和
+        for response in [response1, response2, response3, response4, response5, response6, response7, response8,
+                         response9, response10, response11, response12, response13]:
+            if response is not None:
+                # 累加特定字段的值
+                出款金额 += response.get('simpleGiverSumGiftAmount', 0) + response.get('sumRealAmount', 0)
+
+        # 输出总和
+        print("出款金额:", 出款金额)
+
+        # 格式化日期为字符串
+        start_date = zt.strftime("%Y-%m-%d 00:00:00")
+        end_date = zt.strftime("%Y-%m-%d 23:59:59")
+
+        # 定义请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+
+        # 定义开始时间和结束时间
+        start_date = start_date
+        end_date = end_date
+
+        # 构建两个不同的 URL
+        url = f"http://back.{port}.com/back/back/sscPayFirst/sscPayFirstList?limit=20&offset=0&startDate={start_date}&endDate={end_date}&regstartDate=&regendDate=&userName=&parentUsername=&_=1712780228218"
+
+        # 发送 GET 请求
+        response = requests.get(url, headers=headers)
+
+        # 检查响应状态码
+        if response.status_code == 200:
+            # 响应内容解析为 JSON 格式
+            response_data = response.json()
+
+        # 初始化变量来存储总和
+        新增金额 = 0
+
+        # 遍历每个条目并累加 'betCount_own' 和 'awardCount_own' 字段
+        for item in response_data['rows']:
+            新增金额 += item['amount']
+
+        # 打印结果
+        print("新增金额:", 新增金额)
+        留存金额 = 总存款 - 新增金额
+        留存人数 = 充值人数 - 新增人数
+        print("留存金额:", 留存金额)
+        print("留存人数:", 留存人数)
+
+        ################################################充值金额
+
+        # 定义请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+
+        # 定义发送请求的函数
+        def send_request(url, data):
+            # 发送 POST 请求
+            response = requests.post(url, headers=headers, data=data)
+            # 检查响应状态码
+            if response.status_code == 200:
+                # 解析响应数据为 JSON 格式
+                response_data = response.json()
+                return response_data
+            else:
+                print("请求失败，状态码：", response.status_code)
+                return None
+
+        # 设置请求的 URL
+        url = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryAllOnLineData"
+
+        # 构造请求体数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+
+        # 发送请求
+        response = requests.post(url, headers=headers, data=data)
+
+        # 检查响应状态码
+        if response.status_code == 200:
+            # 解析响应数据为 JSON 格式
+            response_data = response.json()
+            # 遍历响应数据列表
+            for item in response_data:
+                if item["channel_name"] == "微信支付":
+                    微信支付 = item.get("sumRealAmount", None)
+                    if 微信支付 is not None:
+                        print(item["channel_name"] + ":", 微信支付)
+                    else:
+                        print("微信支付", 0)
+                        # 检查微信支付是否为None，如果是，则设为0
+                        if 微信支付 is None:
+                            微信支付 = 0.0
+
+            for item in response_data:
+                if item["channel_name"] == "支付宝支付":
+                    支付宝支付 = item.get("sumRealAmount", None)
+                    if 支付宝支付 is not None:
+                        print(item["channel_name"] + ":", 支付宝支付)
+                    else:
+                        print("支付宝支付", 0)
+                        if 支付宝支付 is None:
+                            支付宝支付 = 0.0
+
+            for item in response_data:
+                if item["channel_name"] == "网银支付":
+                    网银支付 = item.get("sumRealAmount", None)
+                    if 网银支付 is not None:
+                        print(item["channel_name"] + ":", 网银支付)
+                    else:
+                        print("网银支付", 0)
+                        # 检查网银支付是否为None，如果是，则设为0
+                        if 网银支付 is None:
+                            网银支付 = 0.0
+
+        # 计算三方支付总额
+        充值金额三方 = 微信支付 + 支付宝支付 + 网银支付
+        print("充值金额三方:", 充值金额三方)
+
+        # 定义请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+
+        # 定义发送请求的函数
+        def send_request(url, data):
+            # 发送 POST 请求
+            response = requests.post(url, headers=headers, data=data)
+            # 检查响应状态码
+            if response.status_code == 200:
+                # 解析响应数据为 JSON 格式
+                response_data = response.json()
+                return response_data
+            else:
+                print("请求失败，状态码：", response.status_code)
+                return None
+
+        # 设置请求的 URL
+        url1 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryAllOnLineData"
+
+        # 设置请求的数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+        # 发送第一个请求
+        response1 = send_request(url1, data)
+        # 计算入款金额
+        三方和钱包总和 = sum(item.get('sumRealAmount', 0) for item in response1)
+        # print("三方和钱包总和:",三方和钱包总和)
+
+        钱包总和 = 三方和钱包总和 - 充值金额三方
+        print("钱包总和:", 钱包总和)
+
+        # 格式化日期为字符串
+        date = zt.strftime("%Y-%m-%d")
+
+        # 定义请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+
+        # 设置请求的 URL
+        url = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryAllUnderLineData"
+
+        # 构造请求体数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+
+        # 发送请求
+        response = requests.post(url, headers=headers, data=data)
+
+        # 检查响应状态码
+        if response.status_code == 200:
+            # 解析响应数据为 JSON 格式
+            response_data = response.json()
+            # 遍历响应数据列表
+            for item in response_data:
+                # 如果找到银行卡转账的渠道
+                if item["channel_name"] == "银行卡转账":
+                    # 获取 sumRealAmount 的值
+                    充值金额银行卡 = item.get("sumRealAmount", None)
+                    if 充值金额银行卡 is not None:
+                        print("充值金额银行卡:", 充值金额银行卡)
+                    else:
+                        print("充值金额银行卡:", 0)
+                    break
+        else:
+            print("请求失败，状态码：", response.status_code)
+
+        # 寻找'数字货币'和'GP币'的渠道，并获取它们的 sumRealAmount 值
+        for item in response_data:
+            if item["channel_name"] == "数字货币":
+                充值金额数字 = item.get("sumRealAmount", None)
+                if 充值金额数字 is not None:
+                    print(item["channel_name"] + ":", 充值金额数字)
+                else:
+                    print("充值金额数字:", 0)
+
+        for item in response_data:
+            if item["channel_name"] == "GP币":
+                充值金额GP币 = item.get("sumRealAmount", None)
+                if 充值金额GP币 is not None:
+                    print(item["channel_name"] + ":", 充值金额GP币)
+                else:
+                    print("GP币:", 0)
+
+        if 充值金额GP币 is not None:
+            充值金额虚拟币 = 钱包总和 + 充值金额GP币
+            print("充值金额虚拟币:", 充值金额虚拟币)
+        else:
+            充值金额虚拟币 = 钱包总和
+            print("充值金额虚拟币:", 充值金额虚拟币)
+
+        # 格式化日期为字符串
+        date = zt.strftime("%Y-%m-%d")
+
+        # 定义请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+
+        # 定义发送请求的函数
+        def send_request(url, data):
+            # 发送 POST 请求
+            response = requests.post(url, headers=headers, data=data)
+            # 检查响应状态码
+            if response.status_code == 200:
+                # 解析响应数据为 JSON 格式
+                response_data = response.json()
+                return response_data
+            else:
+                print("请求失败，状态码：", response.status_code)
+                return None
+
+        # 设置请求的 URL
+        url4 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryYebRecharge"
+
+        # 设置请求的数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+
+        response4 = send_request(url4, data)
+
+        # 计算现金入款
+        余额宝入款 = abs(response4.get('sumRealAmount', 0))
+        print("余额宝入款:", 余额宝入款)
+
+        ##########################################################充值人数
+
+        # 格式化日期为字符串
+        date = zt.strftime("%Y-%m-%d")
+
+        # 定义请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+
+        # 定义发送请求的函数
+        def send_request(url, data):
+            # 发送 POST 请求
+            response = requests.post(url, headers=headers, data=data)
+            # 检查响应状态码
+            if response.status_code == 200:
+                # 解析响应数据为 JSON 格式
+                response_data = response.json()
+                return response_data
+            else:
+                print("请求失败，状态码：", response.status_code)
+                return None
+
+        # 设置请求的 URL
+        url = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryAllOnLineData"
+
+        # 构造请求体数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+
+        # 发送请求
+        response = requests.post(url, headers=headers, data=data)
+
+        # 检查响应状态码
+        if response.status_code == 200:
+            # 解析响应数据为 JSON 格式
+            response_data = response.json()
+            # 遍历响应数据列表
+            for item in response_data:
+                if item["channel_name"] == "微信支付":
+                    微信支付充值人数 = item.get("userCount", None)
+                    if 微信支付充值人数 is not None:
+                        print(item["channel_name"] + ":", 微信支付充值人数)
+                    else:
+                        print("未找到" + item["channel_name"] + "渠道的 userCount 值")
+                        if 微信支付充值人数 is None:
+                            微信支付充值人数 = 0.0
+
+            for item in response_data:
+                if item["channel_name"] == "支付宝支付":
+                    支付宝支付充值人数 = item.get("userCount", None)
+                    if 支付宝支付充值人数 is not None:
+                        print(item["channel_name"] + ":", 支付宝支付充值人数)
+                    else:
+                        print("未找到" + item["channel_name"] + "渠道的 sumRealAmount 值")
+                        if 支付宝支付充值人数 is None:
+                            支付宝支付充值人数 = 0.0
+
+            for item in response_data:
+                if item["channel_name"] == "网银支付":
+                    网银支付充值人数 = item.get("userCount", None)
+                    if 网银支付充值人数 is not None:
+                        print(item["channel_name"] + ":", 网银支付充值人数)
+                    else:
+                        print("网银支付", 0)
+                        # 检查网银支付是否为None，如果是，则设为0
+                        if 网银支付充值人数 is None:
+                            网银支付充值人数 = 0.0
+
+        # 计算三方支付总额
+        充值人数三方 = 微信支付充值人数 + 支付宝支付充值人数 + 网银支付充值人数
+        print("充值人数三方:", 充值人数三方)
+
+        # 格式化日期为字符串
+        date = zt.strftime("%Y-%m-%d")
+
+        # 定义请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+
+        # 定义发送请求的函数
+        def send_request(url, data):
+            # 发送 POST 请求
+            response = requests.post(url, headers=headers, data=data)
+            # 检查响应状态码
+            if response.status_code == 200:
+                # 解析响应数据为 JSON 格式
+                response_data = response.json()
+                return response_data
+            else:
+                print("请求失败，状态码：", response.status_code)
+                return None
+
+        # 设置请求的 URL
+        url1 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryAllOnLineData"
+
+        # 设置请求的数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+
+        # 发送第一个请求
+        response1 = send_request(url1, data)
+
+        # 计算入款金额
+        三方人数和钱包人数总和 = sum(item.get('userCount', 0) for item in response1)
+        print("三方人数和钱包人数总和:", 三方人数和钱包人数总和)
+        钱包人数总和 = 三方人数和钱包人数总和 - 充值人数三方
+        print("钱包人数总和:", 钱包人数总和)
+
+        # 格式化日期为字符串
+        date = zt.strftime("%Y-%m-%d")
+
+        # 定义请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+
+        # 设置请求的 URL
+        url = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryAllUnderLineData"
+
+        # 构造请求体数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+
+        # 发送请求
+        response = requests.post(url, headers=headers, data=data)
+
+        # 检查响应状态码
+        if response.status_code == 200:
+            # 解析响应数据为 JSON 格式
+            response_data = response.json()
+            # 遍历响应数据列表
+            for item in response_data:
+                # 如果找到银行卡转账的渠道
+                if item["channel_name"] == "银行卡转账":
+                    # 获取 sumRealAmount 的值
+                    充值人数银行卡 = item.get("userCount", None)
+                    if 充值人数银行卡 is not None:
+                        print("充值人数银行卡:", 充值人数银行卡)
+                    else:
+                        print("银行卡:", 0)
+
+        # 寻找'数字货币'和'GP币'的渠道，并获取它们的 sumRealAmount 值
+        for item in response_data:
+            if item["channel_name"] == "数字货币":
+                充值人数数字 = item.get("userCount", None)
+                if 充值人数数字 is not None:
+                    print(item["channel_name"] + ":", 充值人数数字)
+                else:
+                    print("数字货币:", 0)
+
+        for item in response_data:
+            if item["channel_name"] == "GP币":
+                充值人数GP币 = item.get("userCount", None)
+                if 充值人数GP币 is not None:
+                    print(item["channel_name"] + ":", 充值人数GP币)
+                else:
+                    print("GP币:", 0)
+
+        充值人数虚拟币 = 钱包人数总和 + 充值人数GP币
+        print("充值人数虚拟币:", 充值人数虚拟币)
+
+        # 格式化日期为字符串
+        date = zt.strftime("%Y-%m-%d")
+
+        # 定义请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+
+        # 定义发送请求的函数
+        def send_request(url, data):
+            # 发送 POST 请求
+            response = requests.post(url, headers=headers, data=data)
+            # 检查响应状态码
+            if response.status_code == 200:
+                # 解析响应数据为 JSON 格式
+                response_data = response.json()
+                return response_data
+            else:
+                print("请求失败，状态码：", response.status_code)
+                return None
+
+        # 设置请求的 URL
+        url4 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryYebRecharge"
+
+        # 设置请求的数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+
+        response4 = send_request(url4, data)
+
+        # 计算现金入款
+        余额宝入款人数 = abs(response4.get('userCount', 0))
+        print("余额宝入款人数:", 余额宝入款人数)
+
+        ###########################################出款金额和出款人数
+
+        # 定义一个函数来发送请求
+        def send_request(url, data):
+            # 设置请求头
+            headers = {
+                "Accept": "*/*",
+                "Accept-Encoding": "gzip, deflate",
+                "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+                "Connection": "keep-alive",
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "cookie": cookie,
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+            }
+
+            # 发送 POST 请求并获取响应
+            response = requests.post(url, headers=headers, data=data)
+
+            # 解析响应数据
+            if response.status_code == 200:
+                return response.json()
+            else:
+                return None
+
+        # 设置请求的 URL
+        url1 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryYebWithdraw"  # 余额宝出款金额
+        url2 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryWithDraw"
+        url3 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryGiftCashSimpleWithdrawSum"  # 红包派发
+        url4 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryYebWithdrawMoney"  # 余额宝现金出款
+
+        # 构造请求体数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+
+        data2 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "5"
+        }
+
+        data3 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "7"
+        }
+
+        data4 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "9"
+        }
+
+        data5 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "11"
+        }
+
+        data6 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "13"
+        }
+
+        data7 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "15"
+        }
+
+        data8 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "17"
+        }
+
+        data9 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "19"
+        }
+
+        data10 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "21"
+        }
+
+        data11 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "23"
+        }
+
+        data12 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "1"
+        }
+
+        data13 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+        }
+
+        # 发送第一个请求
+        response1 = send_request(url1, data)  # 余额宝出款金额
+        response2 = send_request(url2, data2)
+        response3 = send_request(url2, data3)
+        response4 = send_request(url2, data4)
+        response5 = send_request(url2, data5)
+        response6 = send_request(url2, data6)
+        response7 = send_request(url2, data7)
+        response8 = send_request(url2, data8)
+        response9 = send_request(url2, data9)
+        response10 = send_request(url2, data10)
+        response11 = send_request(url2, data11)
+        response12 = send_request(url2, data12)  # 提现金额 银行卡
+        response13 = send_request(url3, data13)  # 红包派发
+        response14 = send_request(url4, data)  # 余额宝现金出款
+
+        # 初始化变量用于存储总和
+        出款金虚拟币 = 0
+
+        # 遍历 response2 到 response11，累加相应的值
+        for response in [response2, response3, response4, response5, response6, response7, response8, response9,
+                         response10, response11]:
+            if response is not None:
+                # 累加特定字段的值
+                出款金虚拟币 += response.get('simpleGiverSumGiftAmount', 0) + response.get('sumRealAmount', 0)
+
+        # 输出总和
+        print("出款金额虚拟币:", 出款金虚拟币)
+
+        # 初始化变量用于存储总和
+        total_amount1 = 0
+
+        # 遍历 response14累加相应的值
+        for response in [response14]:
+            if response is not None:
+                # 累加特定字段的值
+                total_amount1 += response.get('sumRealAmount', 0)
+
+        # 输出总和
+        # rint("余额宝现金出款:", total_amount1)
+
+        # 初始化变量用于存储总和
+        出款金额余额宝 = 0
+
+        # 遍历 response1累加相应的值
+        for response in [response1]:
+            if response is not None:
+                # 累加特定字段的值
+                出款金额余额宝 += response.get('sumRealAmount', 0)
+
+        # 输出总和
+        print("出款金额余额宝:", 出款金额余额宝)
+
+        # 初始化变量用于存储总和
+        出款金额银行卡 = 0
+
+        # 遍历response12，累加相应的值
+        for response in [response12]:
+            if response is not None:
+                # 累加特定字段的值
+                出款金额银行卡 += response.get('sumRealAmount', 0)
+
+        print("出款金额银行卡:", 出款金额银行卡)
+
+        ###################################################
+        # 初始化变量用于存储总和
+        提款人虚拟币 = 0
+
+        # 遍历 response2 到 response11，累加相应的值
+        for response in [response2, response3, response4, response5, response6, response7, response8, response9,
+                         response10, response11]:
+            if response is not None:
+                # 累加特定字段的值
+                提款人虚拟币 += response.get('simpleGiverSumGiftAmount', 0) + response.get('userCount', 0)
+
+        # 输出总和
+        print("提款人虚拟币:", 提款人虚拟币)
+
+        # 初始化变量用于存储总和
+        total_amount1 = 0
+
+        # 遍历 response14累加相应的值
+        for response in [response14]:
+            if response is not None:
+                # 累加特定字段的值
+                total_amount1 += response.get('userCount', 0)
+
+        # 输出总和
+        # print("提款人数余额宝现金出款:", total_amount1)
+
+        # 初始化变量用于存储总和
+        提款人数余额宝 = 0
+
+        # 遍历 response1累加相应的值
+        for response in [response1]:
+            if response is not None:
+                # 累加特定字段的值
+                提款人数余额宝 += response.get('userCount', 0)
+
+        # 输出总和
+        print("提款人数余额宝:", 提款人数余额宝)
+
+        # 初始化变量用于存储总和
+        提款人数银行卡 = 0
+
+        # 遍历response12，累加相应的值
+        for response in [response12]:
+            if response is not None:
+                # 累加特定字段的值
+                提款人数银行卡 += response.get('userCount', 0)
+
+        print("提款人数银行卡:", 提款人数银行卡)
+
+        ############################################打码量和盈利
+        # 定义一个函数来发送请求
+        def send_request(url, data):
+            # 设置请求头
+            headers = {
+                "Accept": "*/*",
+                "Accept-Encoding": "gzip, deflate",
+                "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+                "Connection": "keep-alive",
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "cookie": cookie,
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+            }
+
+            # 发送 POST 请求并获取响应
+
+            try:
+                response = requests.post(url, headers=headers, data=data)
+                response.raise_for_status()  # 如果请求不成功，会抛出异常
+                return response.json()  # 尝试解析JSON数据
+            except RequestException as e:
+                print(f"An error occurred: {e}")
+                return None
+
+        # 设置请求的 URL
+        url1 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryRebateAmount"
+        url2 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryGiftCashSysWithdrawSum"
+        url3 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryArtificial"
+        url4 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryUnderLineActivity"
+        url5 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryThirdActivity"
+        url6 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryForthActivity"
+        url7 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryRecordAmount"
+        url8 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryRecordAmount"
+        url9 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryLotteryActivity"
+        url10 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryLotteryActivity"
+        url11 = f"http://back.{port}.com/back/back/sscPayChannelDataReport/queryYbInterestRecord"
+
+        # 构造请求体数据
+        data = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "1",
+            "rechargeType": "15"
+        }
+        data1 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "4",
+            "rebateType": "7",
+        }
+        data2 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "3",
+        }
+        data3 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "rebateType": "4",
+        }
+
+        data4 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "type": "1",
+        }
+
+        data5 = {
+            "options": "1",
+            "startTime": date,
+            "endTime": date,
+            "rebateType": "6",
+        }
+
+        # 发送第一个请求
+        response1 = send_request(url1, data)
+        response2 = send_request(url2, data)
+        response3 = send_request(url3, data)
+        response4 = send_request(url4, data)
+        response5 = send_request(url5, data)
+        response6 = send_request(url6, data)
+        response7 = send_request(url7, data2)
+        response8 = send_request(url8, data1)
+        response9 = send_request(url9, data3)
+        response10 = send_request(url10, data1)
+        response11 = send_request(url11, data)
+        response12 = send_request(url7, data4)
+        response13 = send_request(url9, data5)
+
+        # 解析第一个响应数据
+        if response1 is not None:
+            彩票投注减中奖 = response1['sumBetsAmount'] - response1['sumAwardAmount']  # 投注金额-中奖金额
+            # print("彩票投注减中奖:", 彩票投注减中奖)
+        else:
+            print("无法获取数据.")
+
+        # 解析第一个响应数据
+        if response1 is not None:
+            彩票打码 = response1['sumBetsAmount']
+            print("彩票打码:", 彩票打码)
+        else:
+            print("无法获取数据.")
+
+        # 解析第一个响应数据
+        if response1 is not None:
+            中奖金额 = response1['sumAwardAmount']
+            # print("中奖金额:", 中奖金额)
+        else:
+            print("无法获取数据.")
+
+        if response1 is not None:
+            返点总额 = response1['sumRebateAmount']
+            # print("返点总额:", 返点总额)
+        else:
+            print("无法获取数据.")
+
+        # 初始化变量用于存储总和
+        活动礼金 = 0  # 当月活动礼金总和
+
+        # 遍历 response2 到 response11，累加相应的值
+        for response in [response2, response3, response4, response5, response6, response7, response8, response9,
+                         response10, response11, response12, response13]:
+            if response is not None:
+                活动礼金 += response.get('cusSumGiftAmount', 0) + response.get('sumRealAmount', 0)  # 活动礼金总和
+
+        # print("活动礼金:", 活动礼金)
+
+        # 盈利 = 投注金额 - 中奖金额 - 活动礼金 - 返点 + 行政提出
+        彩票盈利 = 彩票投注减中奖 - 活动礼金 - 返点总额
+        # 打印结果
+        print("彩票盈利:", 彩票盈利)
+
+        def get_total_profit(url):
+            # 定义请求头
+            headers = {
+                "Accept": "*/*",
+                "Accept-Encoding": "gzip, deflate",
+                "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+                "Connection": "keep-alive",
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "cookie": cookie,
+                "Origin": f"http://back.{port}.com",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+            }
+
+            # 发送 GET 请求
+            response = requests.get(url, headers=headers)
+
+            # 检查响应状态码
+            if response.status_code == 200:
+                # 解析 JSON 数据
+                json_response = response.json()
+                # 获取 'rows' 列表
+                rows = json_response.get('rows', [])
+                # 初始化总盈利
+                total_recharge_coin = 0
+                # 计算总盈利
+                for row in rows:
+                    # 计算每个键的值并相加
+                    total_recharge_coin += row.get('betsAmount', 0) + row.get('sumBet', 0) + row.get('sendAmount',
+                                                                                                     0) + row.get(
+                        'betCount_own', 0)
+                return total_recharge_coin
+            else:
+                # 请求失败时打印错误信息
+                print("Failed to retrieve data. Status code:", response.status_code)
+                return None
+
+        # 定义开始时间和结束时间
+        start_date = date
+        end_date = date
+
+        # 构建两个不同的 URL
+        url2 = f"http://back.{port}.com/back/cards/openCardsAgentReport/openCardsAgentReportList?limit=20&offset=0&parentId=0&startDate={start_date}&endDate={end_date}&options=1&username=&_=1711593363129"
+        url3 = f"http://back.{port}.com/back/cards/jdbAgentReport/jdbAgentReportList?limit=20&offset=0&parentId=0&startDate={start_date}&endDate={end_date}&options=1&username=&choice=beijingDate&_=1711593366450"
+        url4 = f"http://back.{port}.com/back/cards/agDataReportDay/agentReportList?parentId=0&startDate={start_date}&endDate={end_date}&options=1&username=&flag=&severalTimes=&_=1711593367056"
+
+        # 获取棋牌当月总盈利
+        开元打码 = get_total_profit(url2)
+        jdb打码 = get_total_profit(url3)
+        ag打码 = get_total_profit(url4)
+        # 打印结果
+        if 开元打码 is not None:
+            print("开元打码:", 开元打码)
+        if jdb打码 is not None:
+            print("jdb打码:", jdb打码)
+        if ag打码 is not None:
+            print("ag打码:", ag打码)
+
+        # 定义请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "Origin": f"http://back.{port}.com",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+        # 定义开始时间和结束时间
+        start_date = date
+        end_date = date
+        # 红包游戏统计报表
+        url = f'http://back.{port}.com/back/back/sscCustomerRedRoomReport/redGiftGameReportList?option=1&startTime={start_date}&endTime={end_date}'
+        # 发送 GET 请求
+        response = requests.get(url, headers=headers)
+        # 检查响应状态码
+        if response.status_code == 200:
+            # 响应内容解析为 JSON 格式
+            response_data = response.json()
+            红包打码2 = response_data.get('sendAmount')
+            print('红包打码:', 红包打码2)
+            红包盈利2 = response_data.get('profitAmount')
+            # print('红包盈利2:',abs(红包盈利2) if 红包盈利2 < 0 else "-" + str(红包盈利2))
+            红包盈利3 = abs(红包盈利2) if 红包盈利2 < 0 else "-" + str(红包盈利2)
+            # print('红包盈利3:', 红包盈利3)
+
+        def get_total_profit(url):
+            # 定义请求头
+            headers = {
+                "Accept": "*/*",
+                "Accept-Encoding": "gzip, deflate",
+                "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+                "Connection": "keep-alive",
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "cookie": cookie,
+                "Origin": f"http://back.{port}.com",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+            }
+
+            # 发送 GET 请求
+            response = requests.get(url, headers=headers)
+
+            # 检查响应状态码
+            if response.status_code == 200:
+                # 解析 JSON 数据
+                json_response = response.json()
+                # 获取 'rows' 列表
+                rows = json_response.get('rows', [])
+                # 初始化总盈利
+                total_recharge_coin = 0
+                # 计算总盈利
+                for row in rows:
+                    # 计算每个键的值并相加
+                    total_recharge_coin += row.get('winAmount', 0) + row.get('sumTotal', 0) + row.get('profitAmount', 0)
+                return total_recharge_coin
+            else:
+                # 请求失败时打印错误信息
+                print("Failed to retrieve data. Status code:", response.status_code)
+                return None
+
+        # 定义开始时间和结束时间
+        start_date = date
+        end_date = date
+
+        # 构建两个不同的 URL
+        url2 = f"http://back.{port}.com/back/cards/openCardsAgentReport/openCardsAgentReportList?limit=20&offset=0&parentId=0&startDate={start_date}&endDate={end_date}&options=1&username=&_=1711593363129"
+        url3 = f"http://back.{port}.com/back/cards/jdbAgentReport/jdbAgentReportList?limit=20&offset=0&parentId=0&startDate={start_date}&endDate={end_date}&options=1&username=&choice=beijingDate&_=1711593366450"
+        url4 = f"http://back.{port}.com/back/cards/agDataReportDay/agentReportList?parentId=0&startDate={start_date}&endDate={end_date}&options=1&username=&flag=&severalTimes=&_=1711593367056"
+
+        # 获取当月总盈利
+        开元盈利2 = get_total_profit(url2)
+        jdb盈利2 = get_total_profit(url3)
+        ag盈利2 = get_total_profit(url4)
+
+        红包盈利 = abs(红包盈利2) if 红包盈利2 < 0 else "-" + str(红包盈利2)
+        开元盈利 = abs(开元盈利2) if 开元盈利2 < 0 else "-" + str(开元盈利2)
+        JDB捕鱼盈利 = abs(jdb盈利2) if jdb盈利2 < 0 else "-" + str(jdb盈利2)
+        AG捕鱼盈利 = abs(ag盈利2) if ag盈利2 < 0 else "-" + str(ag盈利2)
+
+        # 定义请求头
+        headers = {
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "cookie": cookie,
+            "Origin": f"http://back.{port}.com",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
+        }
+        # 定义开始时间和结束时间
+        start_date = date
+        end_date = date
+        # 棋牌运营报表
+        url = f'http://back.{port}.com/back/cards/cardsDataReport/sumAmount?options=1&startTime={start_date}&endTime={end_date}'
+        # 发送 GET 请求
+        response = requests.get(url, headers=headers)
+        # 检查响应状态码
+        if response.status_code == 200:
+            # 响应内容解析为 JSON 格式
+            response_data = response.json()
+            棋牌打码2 = response_data.get('sumBetAmount')
+            print('棋牌打码2:', 棋牌打码2)
+            棋牌盈利2 = response_data.get('sumWinAmount')
+            print('棋牌盈利2:', 棋牌盈利2)
+
+        红包盈利1 = float(红包盈利3)  # 将字符串转换为浮点数
+        print('红包盈利1', 红包盈利1)
+        开元盈利1 = float(开元盈利)  # 将字符串转换为浮点数
+        print('开元盈利', 开元盈利)
+        JDB捕鱼盈利1 = float(JDB捕鱼盈利)  # 将字符串转换为浮点数
+        print('JDB捕鱼盈利', JDB捕鱼盈利1)
+        AG捕鱼盈利1 = float(AG捕鱼盈利)  # 将字符串转换为浮点数
+        print('AG捕鱼盈利', AG捕鱼盈利1)
+
+        总打码 = 彩票打码 + 棋牌打码2 + 开元打码 + jdb打码 + ag打码 + 红包打码2
+        print('打码相加总和:', 总打码)
+
+        总盈亏金额 = 彩票盈利 + 棋牌盈利2 + 红包盈利1 + 开元盈利1 + JDB捕鱼盈利1 + AG捕鱼盈利1
+        print('盈利相加总和:', 总盈亏金额)
+
+        # 打开现有的 Excel 表格
+        workbook = load_workbook('A02每小时数据.xlsx')
+
+        # 选择要写入数据的工作表
+        sheet = workbook.active
+
+        # 按照指定的行和列写入数据
+        sheet['B4'] = 在线人数
+        sheet['C4'] = 注册会员
+        sheet['D4'] = 充值人数
+        sheet['E4'] = 出款人数
+        sheet['F4'] = 投注会员
+        sheet['G4'] = 总存款
+        sheet['H4'] = 出款金额
+        sheet['I4'] = 留存金额
+        sheet['J4'] = 留存人数
+        sheet['K4'] = 新增金额
+        sheet['L4'] = 新增人数
+        sheet['M4'] = 充值金额银行卡 if 充值金额银行卡 is not None else 0
+        sheet['N4'] = 充值金额三方
+        sheet['O4'] = 充值金额数字 if 充值金额数字 is not None else 0
+        sheet['P4'] = 余额宝入款
+        sheet['Q4'] = 充值金额虚拟币
+        sheet['R4'] = 出款金额银行卡
+        sheet['S4'] = 出款金虚拟币
+        sheet['T4'] = 出款金额余额宝
+        sheet['U4'] = 充值人数银行卡
+        sheet['V4'] = 充值人数三方
+        sheet['W4'] = 充值人数数字
+        sheet['X4'] = 余额宝入款人数
+        sheet['Y4'] = 充值人数虚拟币
+        sheet['Z4'] = 提款人数银行卡
+        sheet['AA4'] = 提款人虚拟币
+        sheet['AB4'] = 提款人数余额宝
+        sheet['AI4'] = 总打码
+        sheet['AL4'] = 总盈亏金额
+
+        # 保存修改并关闭 Excel 文件
+        workbook.save('A02每小时数据.xlsx')
+
+        # 使用系统默认的程序打开 Excel 文件
+        os.startfile('A02每小时数据.xlsx')
+
+    except Exception as e:
+        messagebox.showerror("错误", str(e))
+
+
+# 函数：手动保存配置
+def manual_save():
+    port = entry_port.get()
+    cookie = entry_password.get()
+    save_config(port, cookie)
+    messagebox.showinfo("提示", "配置已保存！")
+
+
+def on_closing():
+    global in_smart_mode
+    if in_smart_mode:
+        stop_event.set()  # 通知线程退出
+    root.destroy()  # 关闭窗口
+
+
+# 创建主窗口
+root = tk.Tk()
+root.title("A02每小时数据")
+root.geometry("330x430+100+100")  # 设置窗口大小
+
+# 设置字体
+font_style = ("Helvetica", 12)
+font_styl = ("Helvetica", 15)
+
+# 如果存在配置文件则加载配置
+port, cookie = load_config()
+
+
+# 创建“输入端口”标签和输入框
+label_port = tk.Label(root, text="port:", font=font_style)
+label_port.grid(row=1, column=0, padx=10, pady=5, sticky='e')
+
+entry_port = tk.Entry(root, font=font_style)
+entry_port.grid(row=1, column=1, padx=10, pady=5)
+entry_port.insert(0, port)
+
+# 创建“输入密码”标签和输入框
+label_password = tk.Label(root, text="Cookie:", font=font_style)
+label_password.grid(row=2, column=0, padx=10, pady=5, sticky='e')
+
+entry_password = tk.Entry(root, font=font_style)
+entry_password.grid(row=2, column=1, padx=10, pady=5)
+entry_password.insert(0, cookie)
+
+# 创建“手动保存”按钮
+save_button = tk.Button(root, text="手动保存", command=manual_save, font=font_style)
+save_button.grid(row=4, columnspan=3, pady=10)
+
+submit_button_today = tk.Button(root, text="获取今日数据", command=run_script_today, font=font_styl, fg='red')
+submit_button_today.grid(row=5, columnspan=2, pady=10)
+
+submit_button_today = tk.Button(root, text="获取昨日数据", command=run_script_yesterday, font=font_styl, fg='blue')
+submit_button_today.grid(row=6, columnspan=2, pady=10)
+
+# 超级显示框
+time_label = tk.Label(root, text="", font=("Microsoft YaHei", 18), bg="gray", fg="white")
+time_label.grid(row=7, columnspan=2, pady=10)
+
+
+def update_time():
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    time_label.config(text=current_time)
+    time_label.after(1000, update_time)
+
+
+update_time()
+
+# 智能模式按钮
+smart_button = tk.Button(root, text="智能模式", command=smart_mode, font=font_style, bg="light blue")
+smart_button.grid(row=8, columnspan=2, pady=10)
+
+# 倒计时显示框
+countdown_label = tk.Label(root, text="", font=("Microsoft YaHei", 10), bg="red", fg="white")
+countdown_label.grid(row=9, columnspan=2, pady=10)
+
+# 绑定窗口关闭事件
+root.protocol("WM_DELETE_WINDOW", on_closing)
+
+# 运行主循环
+root.mainloop()
