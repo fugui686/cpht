@@ -1,0 +1,115 @@
+import requests
+import os
+import openpyxl
+import tkinter as tk
+from tkinter import messagebox
+from datetime import datetime,timedelta
+from openpyxl.workbook import Workbook
+
+当前时间 = datetime.now()
+昨天时间 = 当前时间 - timedelta(days=1)
+昨天 = 昨天时间.strftime('%Y-%m-%d 00:00:00')
+今天 = 当前时间.strftime('%Y-%m-%d 00:00:00')
+
+def run_script():
+    try:
+        tokenk = entry_password.get()  # 获取 Cookie
+        port = entry_port.get()  # 获取 URL 中的数字部分
+        channel = entry_channel.get()
+        headers = {
+            'Cookie': tokenk,
+        }
+        url = f'http://back.{port}.com/back/back/sscRisk/ipLogList'
+
+        params = {
+            'limit': '99999',
+            'offset': '0',
+            'logType': '2',
+            'username': '',
+            'startTime': 昨天,
+            'endTime': 今天,
+            'istest': '0',
+        }
+
+        response = requests.get(url, headers=headers, params=params)
+        if response.status_code == 200:
+            data = response.json()['rows']
+
+            wb = Workbook()
+            ws = wb.active
+
+            ws.append(['APPID', '归属', 'IP', '登录时间', ])
+
+            for dd in data:
+                用户名 = dd.get('username')
+                IP地址 = dd.get('ip')
+                归属 = channel
+                登录时间 = 昨天时间.strftime('%Y-%m-%d 00:00:00')
+                ws.append([用户名, 归属, IP地址, 登录时间, ])
+
+            wb.save('out.xlsx')
+
+        # 读取 Excel 文件
+        wb = openpyxl.load_workbook('out.xlsx')
+        ws = wb.active
+
+        # 获取所有 APPID 列的值
+        appid_column = ws['A']
+        appid_values = [cell.value for cell in appid_column]
+
+        # 创建一个新的工作表
+        new_wb = openpyxl.Workbook()
+        new_ws = new_wb.active
+
+        # 添加表头
+        new_ws.append(['APPID', '归属', 'IP', '登录时间'])
+
+        # 创建一个集合来存储唯一的 APPID
+        unique_appids = set()
+
+        # 遍历原工作表，去除重复项
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            appid = row[0]
+            if appid not in unique_appids:
+                unique_appids.add(appid)
+                new_ws.append(row)
+
+        # 保存新的工作表
+        new_wb.save('会员登录信息.xlsx')
+        os.startfile('会员登录信息.xlsx')
+
+    except Exception as e:
+        messagebox.showerror("错误", str(e))
+
+# 创建主窗口
+root = tk.Tk()
+root.title("彩票昨日会员登录信息")
+root.geometry("330x170")  # 设置窗口大小
+
+# 设置字体
+font_style = ("Helvetica", 12)
+font_styl = ("Helvetica", 15)
+# 创建标签和输入框
+label_channel = tk.Label(root, text="请输入归属:", font=font_style)
+label_channel.grid(row=0, column=0, padx=10, pady=5, sticky='e')  # 添加水平和垂直边距
+
+entry_channel = tk.Entry(root, font=font_style)
+entry_channel.grid(row=0, column=1, padx=10, pady=5)
+
+label_port = tk.Label(root, text="请输入端口:", font=font_style)
+label_port.grid(row=1, column=0, padx=10, pady=5, sticky='e')
+
+entry_port = tk.Entry(root, font=font_style)
+entry_port.grid(row=1, column=1, padx=10, pady=5)
+
+label_password = tk.Label(root, text="请输入密码:", font=font_style,)
+label_password.grid(row=2, column=0, padx=10, pady=5, sticky='e')
+
+entry_password = tk.Entry(root, font=font_style)
+entry_password.grid(row=2, column=1, padx=10, pady=5)
+
+submit_button = tk.Button(root, text="提交查询", command=run_script, font=font_styl, fg='red')
+submit_button.grid(row=3, columnspan=2, pady=10)
+
+# 运行主循环
+root.mainloop()
